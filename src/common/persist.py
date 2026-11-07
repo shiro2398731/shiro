@@ -97,11 +97,21 @@ def load_l0(net, name: str = "l0.pkl") -> bool:
 
 
 def save_l1(predictor, name: str = "l1.pkl") -> Path:
-    """L1：预测器权重与上一帧投影。"""
+    """L1：预测器权重与上一帧投影。
+
+    2026-11-07 修复（外部评估 §3.3 的连带发现）：这里原本写 `predictor.prev_z`，
+    而 L1Predictor 在重构里已把它改名为 `_prev_vec`。属性不存在 →
+    save_l1 抛 AttributeError → snapshot_all 抛 → P1 的第一次落盘就崩，
+    supervisor 重启后重复同样的崩溃。实测：进程活不过一步，l1.pkl / l0.pkl
+    从此再没被更新过（原版 shiro 同样如此，d8f336f 里已经是这个状态）。
+
+    用 getattr 兜底，避免持久化层跟着实现重构跑。旧 checkpoint 里的 "prev_z"
+    会被 load_l1 的 hasattr 检查忽略，代价只是重启后第一帧少一段历史。
+    """
     d = _ensure()
     payload = {
         "W_pred": predictor.W_pred,
-        "prev_z": predictor.prev_z,
+        "prev_vec": getattr(predictor, "_prev_vec", None),
     }
     p = d / name
     with p.open("wb") as f:
@@ -343,6 +353,23 @@ def snapshot_all(objs: dict[str, Any]) -> dict[str, str]:
         saved["acc"] = str(save_acc(objs["acc"]))
     if "l5" in objs:
         saved["l5"] = str(save_l5(objs["l5"]))
+
+    # 盖时间章：coma.json 是唯一的时间权威（见 src/common/coma.py）。
+    #
+    # 放在 finally 里：某一次落盘失败不该让 saved_at 停在很久以前。
+    # 否则下一次启动会把"她其实一直在跑的那段时间"算成昏迷 —— 实测过这个后果：
+    # save_l1 抛错期间，gap 从 2.7 s 一路涨到 8.9 s，涨的就是进程醒着的时长。
+    # 语义因此定为"最后一次落盘尝试的时刻"，是 gap 的下界，宁可少算昏迷。
+    try:
+        if "l5" in objs:
+            saved["l5"] = str(save_l5(objs["l5"]))
+    finally:
+        try:
+            from src.common import coma as _coma
+            _coma.mark_saved()
+        except Exception as e:
+            print(f"[persist] coma 时间章失败（不影响状态保存）: {e}")
+
     return saved
 
 

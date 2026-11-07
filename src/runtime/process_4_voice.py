@@ -206,5 +206,54 @@ class _StreamView:
         return cls(attractor_id=aid, x=d.get("x_t", []))
 
 
+# 同一个错误连续出现这么多次，说明它不是瞬态（端口占用、配置错、缺文件），
+# 继续重启只会刷日志并把 CPU 烧在退避上。带着明确退出码停下，由外部 supervisor 决定。
+MAX_IDENTICAL_FAILURES = 5
+
+
+def _supervised() -> int:
+    """崩溃退避重启 + 永久错误快速失败（评估文档 §3.3）。
+
+    瞬态异常：保存形状 → 退避 2/4/8/…/60 s → 重新 main()（会走一次 begin_session，
+    gap 很小 → 快启，不计昏迷事件）。
+    永久异常：同一个错误连续出现 MAX_IDENTICAL_FAILURES 次 → 放弃重启并返回 1。
+    实测依据：端口被占时旧版本会无限重启（每轮打一整段 traceback），
+    对无人看守的长期运行来说，这比停下更糟。
+    """
+    import time as _time
+    import traceback as _tb
+
+    backoff = 2.0
+    last_sig = None
+    repeats = 0
+    while True:
+        try:
+            code = main()
+        except KeyboardInterrupt:
+            return 130
+        except SystemExit:
+            raise
+        except BaseException as exc:
+            sig = f"{type(exc).__name__}: {exc}"
+            repeats = repeats + 1 if sig == last_sig else 1
+            last_sig = sig
+            _tb.print_exc()
+            if repeats >= MAX_IDENTICAL_FAILURES:
+                print(
+                    f"[SUPERVISOR] 同一错误连续 {repeats} 次，放弃重启：{sig}",
+                    flush=True,
+                )
+                return 1
+            print(
+                f"[SUPERVISOR] 崩溃（同一错误第 {repeats} 次），{backoff:.0f}s 后重启",
+                flush=True,
+            )
+            _time.sleep(backoff)
+            backoff = min(backoff * 2.0, 60.0)
+            continue
+        return 0 if code is None else int(code)
+
+
 if __name__ == "__main__":
-    _sys.exit(main())
+    import sys
+    sys.exit(_supervised())

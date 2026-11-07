@@ -816,17 +816,66 @@ class StateSpace:
     def _prune(self) -> None:
         self._merge_overlapping()
 
+    def _population_visit_rate(self) -> Optional[float]:
+        """
+        Median visit rate over existing regions, in assignments per step.
+
+        This is the quantity birth depth actually needs: how often a region of
+        this structure is reached. The total step count cannot answer it -- it
+        says how long the run has lasted, not how busy the structure is. It is
+        the same mistake that `_born_step` was introduced to fix in
+        viability.py; at the time only the R half was aligned and the `p`
+        half was left using the total, which is what made it survive here.
+
+        Returns None when there are too few regions to measure a median.
+        """
+        if len(self._attractors) < 8:
+            return None
+        total = max(int(self._total_steps), 1)
+        rates = []
+        for a in self._attractors:
+            life = max(total - int(a._born_step), 1)
+            assigned = int(getattr(a, "_assigned", 0))
+            if assigned > 0:
+                rates.append(assigned / float(life))
+        if not rates:
+            return None
+        rate = float(np.median(rates))
+        return rate if rate > 0 else None
+
     def _birth_depth(self, scale: float) -> float:
         """
         Depth a newly created region starts with.
 
         Computed the same way carrying_depth computes what a region can hold at
-        a given visit rate, evaluated at the rate a brand new region has: one
-        assignment over the steps taken so far. The two therefore agree at
-        birth instead of differing by a factor of twenty.
+        a given visit rate. The two therefore agree at birth instead of
+        differing by a factor of twenty.
+
+        Correction, 2026-11-07 (external audit, docs/2026-11-07_外部评估_连续存在视角.md §3.2)
+        -----------------------------------------------------------------------------------
+        The visit rate used to be `1.0 / total_steps`, i.e. "one assignment over
+        every step this run has ever taken". By that formula birth depth falls
+        with elapsed time: with the defaults (assign_ratio 0.05, recover_rate
+        0.002, cadence 16, ceiling 1.0, min_amp 1e-3) it is
+
+            3.85e-2 at 1e4 steps, 2.70e-3 at 147664 steps (the longest run on
+            record), 1.00e-3 at 399600 steps, 4.00e-4 at 1e6 steps
+
+        and min_amp is 1e-3. So past roughly 400k steps every new region is born
+        already below the survival line and is deleted by the next recover():
+        the structure stops growing and only deepens what exists. A run that is
+        supposed to last cannot have a term that makes new structure impossible
+        the longer it lasts.
+
+        The rate therefore comes from the population, measured: the median
+        assignments-per-step of the regions that already exist. It does not
+        depend on how long the run has lasted. Cold start (fewer than 8 regions,
+        nothing to measure) falls back to 1 assignment per 1 step, which is what
+        a brand new structure with a single region actually has.
         """
-        total = max(int(self._total_steps), 1)
-        p = 1.0 / total
+        p = self._population_visit_rate()
+        if p is None:
+            p = 1.0
         num = p * self.assign_ratio
         every = max(int(self._recover_every_hint), 1)
         R = self.recover_rate / every
