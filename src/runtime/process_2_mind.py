@@ -1,0 +1,283 @@
+"""
+src/runtime/process_2_mind.py — P2: L2 + L4 + L5
+
+本版本职责：
+- 订阅 P1 的 l1.state.surprise（预测误差）
+- 订阅 P1 的 l2.state.field（状态场）
+- 用预测误差决定 L5 的噪声幅度（代替任何写死的 sigma）
+- advances the L5 state-space dynamics
+- 发布 l5.state.stream / l5.event.transition
+
+尚未实现：
+- L4（动机竞争）
+- L2 本体从 P1 迁移过来（现在 L2 还在 P1 内）
+
+关于 L5 的输入来自哪里
+--------------------
+
+L5 是 128 维，上游是 16 维状态场 + 标量惊讶。**L2 不做 L5 的坐标，只做调制**（
+ARCHITECTURE.md §3、00_foundations.md §8.1）：
+
+  - 噪声幅度：由惊讶的当前水平决定 → 惊讶大，探索幅度大
+  - 偏转场：由状态场经固定随机投影到 128 维 → tilts the potential; it does not determine position
+
+这个投影的随机种子是固定的（存在 config），所以换设备迁移时同一份投影还在，
+但她走到的位置仍然由 L5 自己的动力学决定。
+"""
+
+from __future__ import annotations
+
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", "..")))
+
+import collections
+import signal
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+
+from src.common.bus import Bus
+from src.common.observe import Observer
+from src.common.types import StreamState, StateVector, SurpriseSignal, safe_from_json
+from src.L5_cognition.stream import Stream
+import src.common.persist as persist
+
+
+class L5Runner:
+    """
+    把上游信号翻译成 L5 的三个驱动量：噪声幅度、偏转场、零点。
+
+    **这三个量都来自实测，没有一个是写死的常数。**
+    """
+
+    def __init__(self, dim: int = 128, embed_dim: int = 16, seed: int = 1234):
+        self.D = dim
+        self.embed_dim = embed_dim
+
+        # 固定随机投影：16 维状态场 → 128 维偏转场。
+        # 种子固定，所以换设备后同一份投影还在（身份连续的一部分）。
+        rng = np.random.default_rng(seed)
+        self.proj = rng.normal(0.0, 1.0, (dim, embed_dim)) / np.sqrt(embed_dim)
+
+        # 惊讶信号的历史，用于把"当前惊讶"标准化为相对量
+        self.surprise_hist = collections.deque(maxlen=256)
+        # L0 统计量的历史，用于定零点
+        self.feature_hist = collections.deque(maxlen=512)
+
+        self._zero_ready = False
+
+    # ---------- 噪声幅度 ----------
+
+    def noise_amplitude(self) -> float:
+        """
+        噪声幅度 = 当前惊讶相对其自身历史的位置。
+
+        惊讶大 → 探索幅度大。这不是“设计者觉得该抖多少”，
+        而是“她现在比以前更难预测”这个事实的后果。
+
+        关于 MAD=0：惊讶长期恒定时 MAD 为 0，此时不能返回 0
+        （那会让系统彻底静止）。退回到用历史量级本身作尺度：
+        稳定的惊讶也有一个水平，偏离那个水平的部分才是“惊讶的惊讶”。
+        """
+        if len(self.surprise_hist) < 32:
+            return 0.0
+        arr = np.asarray(self.surprise_hist, dtype=float)
+        med = float(np.median(arr))
+        mad = float(np.median(np.abs(arr - med)))
+
+        if mad < 1e-12:
+            # 历史恒定：用历史水平本身当尺度（而不是用 0）
+            scale = max(abs(med), float(np.sqrt(np.finfo(float).eps)))
+        else:
+            scale = mad
+
+        s_now = float(arr[-1])
+        z = (s_now - med) / scale
+        # 把标准分映射到非负幅度。缩放系数属于工程标度（B 类）。
+        return float(max(abs(z), 0.0) * 0.01)
+
+    # ---------- 偏转场 ----------
+
+    def deflection(self) -> np.ndarray | None:
+        """16 维状态场 → 128 维偏转。只倾斜，不产生凹陷。"""
+        if len(self.feature_hist) == 0:
+            return None
+        v16 = np.asarray(self.feature_hist[-1], dtype=float)
+        if v16.shape[0] != self.embed_dim:
+            return None
+        # 中心化：偏离它的典型值才算"倾向"
+        H = np.stack(list(self.feature_hist)[-64:])
+        center = np.median(H, axis=0)
+        return self.proj @ (v16 - center)
+
+    # ---------- 零点 ----------
+
+    def maybe_calibrate(self, stream: Stream) -> bool:
+        """
+        零点 = 预热期上游统计量的中位数投影。
+
+        这是"她从哪里开始"的唯一来源：不是原点，不是随机初始化，
+        而是她自己身体（L0/L1/L2）在这段时间的实际状态。
+        """
+        if self._zero_ready:
+            return True
+        if len(self.feature_hist) < 64:
+            return False
+        H = np.stack(list(self.feature_hist))
+        z16 = np.median(H, axis=0)
+        z128 = self.proj @ z16
+        stream.calibrate(z128.reshape(1, -1))
+        self._zero_ready = True
+        return True
+
+
+def main() -> int:
+    log_dir = Path("data/logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    bus = Bus("P2")
+    stream = Stream(dim=128, gamma=0.05, dt=0.01)
+    runner = L5Runner(dim=128)
+
+    state = {"surprise": 0.0, "field": None}
+    running = {"flag": True}
+
+    def on_surprise(topic, obj):
+        state["surprise"] = obj.s_t
+        runner.surprise_hist.append(float(obj.s_t))
+
+    def on_field(topic, obj):
+        # L2 目前还在 P1 内广播；这里先接收它的 16 维
+        v = getattr(obj, "v", None)
+        if v is not None and len(v) == 16:
+            state["field"] = list(v)
+            runner.feature_hist.append(np.asarray(v, dtype=float))
+
+    bus.subscribe(
+        "l1.state.surprise", on_surprise,
+        parser=lambda s: safe_from_json(SurpriseSignal, s),
+        owner_module="src.L2_state.field",
+    )
+    bus.subscribe(
+        "l2.state.field", on_field,
+        parser=lambda s: safe_from_json(StateVector, s),
+        owner_module="src.L2_state.field",
+    )
+
+    # 恢复她此刻的形状（不是重放历史）
+    restored = persist.restore_all({"l5": stream})
+    print(f"[P2] restore: {restored}")
+    if restored.get("l5"):
+        ss = stream.stream_state()
+        print(f"[P2] resumed: attractors={ss['n_attractors']}  "
+              f"salient={ss['n_salient']}  steps={stream._step_count}")
+        runner._zero_ready = True
+
+    observer = Observer("P2", log_dir)
+
+    def on_sig(signum, frame):
+        running["flag"] = False
+
+    signal.signal(signal.SIGINT, on_sig)
+    signal.signal(signal.SIGTERM, on_sig)
+
+    print("[P2] starting L5 (terrain dynamics)")
+    print(f"[P2] observations: {log_dir / 'observations.jsonl'}")
+
+    transitions = 0
+    steps = 0
+    last_persist = time.time()
+    PERSIST_INTERVAL_S = 300.0
+
+    # L5 不被定时器驱动，而由上游的新鲜度驱动：
+    # 只在收到新消息、或环境已经变了足够久时才推进一步。
+    fresh = threading.Event()
+
+    def on_surprise_wrap(topic, obj):
+        on_surprise(topic, obj)
+        fresh.set()
+
+    def on_field_wrap(topic, obj):
+        on_field(topic, obj)
+        fresh.set()
+
+    try:
+        while running["flag"]:
+            # 等一个上游事件，或超时（超时只是为了让循环能检查退出标志）
+            got = fresh.wait(timeout=0.5)
+            fresh.clear()
+
+            # 上游还没给够数据：什么也不做，等她身体先积累统计量
+            if not runner.maybe_calibrate(stream):
+                continue
+
+            # 噪声与偏转都由上游实测给出
+            stream.landscape.set_noise_amplitude(runner.noise_amplitude())
+            stream.landscape.set_deflection(runner.deflection())
+
+            ev = stream.step()
+            steps += 1
+            if ev is not None:
+                transitions += 1
+                observer.event("transition", {
+                    "from": ev.from_trace,
+                    "to": ev.to_trace,
+                    "noise_driven": ev.noise_driven,
+                })
+
+            # 观测快照（3 分钟一次）
+            ss = stream.broadcast_state()
+            observer.snapshot("L5", {
+                "steps": steps,
+                "attractors": ss["n_attractors"],
+                "n_salient": ss["n_salient"],
+                "speed": round(ss["speed"], 4),
+                "potential": round(ss["potential"], 4),
+                "noise": round(stream.landscape.noise_amplitude, 5),
+                "transitions": transitions,
+                # L3
+                "edges": ss["n_edges"],
+                "recall": ss["recall"],
+                # L4
+                "tensions": ss["tensions"]["n"],
+                "tension_sum": ss["tensions"]["sum"],
+                # L8
+                "identity": ss["identity"],
+                "id_rounds": stream.identity.rounds,
+            })
+
+            # 发布 l5.state.stream。P4（L6）靠它拿符号，P3 靠它记录。
+            # payload carries a vector, but L6 may read attractor_id only
+            # (ARCHITECTURE section 4.2).
+            bus.publish(
+                "l5.state.stream",
+                StreamState(
+                    x_t=ss["x"],
+                    attractor_id=str(ss["attractor_id"]),
+                    landscape_energy=float(ss["potential"]),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+            # 存她此刻的形状
+            now = time.time()
+            if now - last_persist >= PERSIST_INTERVAL_S:
+                persist.snapshot_all({"l5": stream})
+                last_persist = now
+    finally:
+        try:
+            persist.snapshot_all({"l5": stream})
+            print("[P2] 形状已保存")
+        except Exception as e:
+            print(f"[P2] 保存失败: {e}")
+        bus.stop()
+        print("[P2] stopped")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

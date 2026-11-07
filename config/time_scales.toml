@@ -1,0 +1,17 @@
+[T0]
+period_ms = 1.0
+
+[T1]
+period_ms = 500.0
+
+[T2]
+period_ms = 5000.0
+
+[T3]
+period_ms = 30000.0
+
+[T4]
+period_sec = 1800.0
+
+[T5]
+period_sec = 86400.0

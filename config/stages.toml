@@ -1,0 +1,19 @@
+[stage_0]
+name = "newborn"
+unlock = ["L0", "L1"]
+
+[stage_1]
+name = "infant"
+unlock = ["L2", "L3_episodic"]
+
+[stage_2]
+name = "toddler"
+unlock = ["L3_semantic", "L4", "L6_template"]
+
+[stage_3]
+name = "child"
+unlock = ["L5_meaningful", "L6_llm"]
+
+[stage_4]
+name = "mature"
+unlock = []
