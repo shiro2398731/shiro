@@ -147,6 +147,10 @@ def main() -> int:
     print("-" * 78)
 
     rows: list[dict] = []
+    # 边跑边写：1 小时的活儿不该因为中途 Ctrl+C 或崩溃就全丢。
+    csv_fh = out_csv.open("w", newline="", encoding="utf-8")
+    writer = None
+
     prev_att = None
     frozen_streak = 0
     speed_medians: list[float] = []
@@ -228,6 +232,12 @@ def main() -> int:
                     "steps_per_second": round(float(coma.get("steps_per_second", 0) or 0), 2),
                 })
 
+                if writer is None:
+                    writer = csv.DictWriter(csv_fh, fieldnames=list(rows[-1].keys()))
+                    writer.writeheader()
+                writer.writerow(rows[-1])
+                csv_fh.flush()
+
                 windows.append(cur)
                 cur = Window(idx=cur.idx + 1, t0=now)
                 next_report = now + args.window
@@ -238,12 +248,11 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\n[watch] interrupted")
 
-    # ── 落盘 ──
-    if rows:
-        with out_csv.open("w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-            w.writeheader()
-            w.writerows(rows)
+    # ── 收尾：CSV 已逐行写好，这里只关文件 ──
+    try:
+        csv_fh.close()
+    except Exception:
+        pass
 
     # ── 汇总判定 ──
     verdicts: list[tuple[str, str, str]] = []
