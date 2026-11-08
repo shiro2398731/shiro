@@ -143,6 +143,26 @@ def main() -> int:
     runner = L5Runner(dim=128)
 
     state = {"surprise": 0.0, "field": None}
+    # singleton discipline: follow P1's epoch; stop if it moves.
+    from src.common import epoch as epoch_mod
+    # P1 claims the epoch a moment after it boots, so wait for a non-zero one.
+    # Reading 0 and treating it as ours would fence us against our own sibling,
+    # which is exactly what happened the first time this was wired up.
+    _boot_at = time.time()
+    my_epoch = 0
+    _wait_until = _boot_at + 15.0
+    while time.time() < _wait_until:
+        _st = epoch_mod.load()
+        # 只采纳本次启动之后写入的 epoch：上一轮遗留的那个属于别人。
+        if _st.epoch > 0 and epoch_mod.ledger_mtime() >= _boot_at - 2.0:
+            my_epoch = _st.epoch
+            break
+        time.sleep(0.2)
+    if my_epoch == 0:
+        print("[P2] no epoch was claimed for this boot, refusing to act")
+        return 3
+    print(f"[P2] epoch {my_epoch}")
+
     running = {"flag": True}
 
     def on_surprise(topic, obj):
@@ -226,6 +246,9 @@ def main() -> int:
             # 等一个上游事件，或超时（超时只是为了让循环能检查退出标志）
             got = fresh.wait(timeout=0.5)
             fresh.clear()
+            if not epoch_mod.is_current(my_epoch):
+                print("[P2] fenced, stopping")
+                break
 
             # 上游还没给够数据：什么也不做，等她身体先积累统计量
             if not runner.maybe_calibrate(stream):

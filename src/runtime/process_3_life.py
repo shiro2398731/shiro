@@ -82,6 +82,26 @@ def main() -> int:
     def on_sig(signum, frame):
         stop.set()
 
+    # singleton discipline: follow P1's epoch; stop if it moves.
+    from src.common import epoch as epoch_mod
+    # P1 claims the epoch a moment after it boots, so wait for a non-zero one.
+    # Reading 0 and treating it as ours would fence us against our own sibling,
+    # which is exactly what happened the first time this was wired up.
+    _boot_at = time.time()
+    my_epoch = 0
+    _wait_until = _boot_at + 15.0
+    while time.time() < _wait_until:
+        _st = epoch_mod.load()
+        # 只采纳本次启动之后写入的 epoch：上一轮遗留的那个属于别人。
+        if _st.epoch > 0 and epoch_mod.ledger_mtime() >= _boot_at - 2.0:
+            my_epoch = _st.epoch
+            break
+        time.sleep(0.2)
+    if my_epoch == 0:
+        print("[P3] no epoch was claimed for this boot, refusing to act")
+        return 3
+    print(f"[P3] epoch {my_epoch}")
+
     signal.signal(signal.SIGINT, on_sig)
     signal.signal(signal.SIGTERM, on_sig)
 
@@ -92,6 +112,9 @@ def main() -> int:
     try:
         while not stop.is_set():
             stop.wait(1.0)
+            if not epoch_mod.is_current(my_epoch):
+                print("[P3] fenced, stopping")
+                break
             now = time.time()
             if now - last_eval < 60:
                 continue

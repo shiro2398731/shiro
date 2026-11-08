@@ -1115,6 +1115,18 @@ def main() -> int:
     l2_steps = 0
 
     # 恢复她此刻的形状（不是重放历史）
+    # ---- singleton discipline: claim the epoch before touching her state.
+    # ---- A stale process on another host keeps running if it likes, but its
+    # ---- fence check will fail and it stops acting. No liveness assumptions.
+    from src.common import epoch as epoch_mod
+    _me = epoch_mod.default_holder()
+    _epoch_state, my_epoch = epoch_mod.claim(holder=_me, ttl_s=15.0, wait_s=30.0,
+                                            reason="P1 boot")
+    if _epoch_state.holder != _me:
+        print(f"[P1] refusing to start: epoch {_epoch_state.epoch} is held by "
+              f"{_epoch_state.holder} (lease until {_epoch_state.lease_until})")
+        return 3
+    print(f"[P1] epoch {my_epoch} held by {_epoch_state.holder}")
     restored = persist.restore_all({
         "l0": net, "l1": predictor, "l2": field, "acc": net.accumulator,
     })
@@ -1244,6 +1256,7 @@ def main() -> int:
     last_rate = 0.0
     last_published_phase = None    # 只在相位变化时发布，不按时间发布
     last_published_l2_updates = -1
+    last_epoch_check = 0.0
     _last_fed = None               # 上一次送入 L2 的周期统计对象（去重，避免一个周期内重复入滑窗）
     try:
         while running["flag"]:
@@ -1368,6 +1381,13 @@ def main() -> int:
                 })
                 last_persist = now
 
+            # fence: if the epoch moved, another self owns her now.
+            if now - last_epoch_check >= 5.0:
+                last_epoch_check = now
+                if not epoch_mod.heartbeat(my_epoch):
+                    print("[P1] fenced: epoch moved, stopping instead of acting")
+                    break
+
             time.sleep(0.001)
     finally:
         # 退出前存一次：她停下来的时候，形状得留下
@@ -1378,6 +1398,10 @@ def main() -> int:
             print("[P1] 形状已保存")
         except Exception as e:
             print(f"[P1] 保存失败: {e}")
+        try:
+            epoch_mod.retire(my_epoch, reason="P1 clean exit")
+        except Exception:
+            pass
         bus.stop()
         print("[P1] stopped")
     return 0
