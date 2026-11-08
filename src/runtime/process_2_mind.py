@@ -169,6 +169,18 @@ def main() -> int:
 
     # 恢复她此刻的形状（不是重放历史）
     restored = persist.restore_all({"l5": stream})
+
+    # ---- append-only journal: the checkpoint compresses the past, the journal
+    # ---- is what happened after it. Replay makes the rollback window zero up to
+    # ---- the last record (one step), instead of 60 s.
+    from src.common.journal import Journal
+    journal = Journal("data/journal/l5.wal")
+    _space = stream.landscape.state_space
+    _space.journal = None            # do not re-journal what we are replaying
+    replayed = journal.replay(_space)
+    _space.journal = journal
+    print(f"[P2] journal replayed: {replayed}"
+          f"  wal={journal.size_bytes()} bytes")
     print(f"[P2] restore: {restored}")
     if restored.get("l5"):
         ss = stream.stream_state()
@@ -284,6 +296,8 @@ def main() -> int:
             if now - last_persist >= PERSIST_INTERVAL_S:
                 persist.snapshot_all({"l5": stream})
                 last_persist = now
+                # 检查点已经包含了日志的全部效果，可以截断
+                journal.truncate()
     finally:
         try:
             persist.snapshot_all({"l5": stream})

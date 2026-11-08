@@ -286,6 +286,10 @@ class StateSpace:
         # Total observations ever recorded. Used as the denominator when
         # measuring per-region visit rate.
         self._total_steps: int = 0
+
+        # 追加式日志（src/common/journal.py）。为 None 时不记录。
+        # 记的是'她经历了什么'，不是'她成了什么样'——后者由重放算出来。
+        self.journal = None
         # Recovery cadence hint, set by the caller (Stream) so recovery can
         # relate a rate to a number of steps.
         self._recover_every_hint: int = 16
@@ -648,6 +652,8 @@ class StateSpace:
         from data, never configured (see Attractor.sigma).
         """
         x = np.asarray(x, dtype=float)
+        if self.journal is not None:
+            self.journal.append_observe(x)
         self._update_global_scale(x)
         self._total_steps += 1
 
@@ -697,7 +703,7 @@ class StateSpace:
             born_t=t_event,
             scale=init_scale,
         )
-        a._decay_factor = float(1.0 + self._rng.normal(0.0, self.decay_spread))
+        a._decay_factor = self._birth_decay_factor()
         a._decay_factor = max(a._decay_factor, 0.05)
         a.members.append(x.copy())
         a._assigned = 1
@@ -843,6 +849,18 @@ class StateSpace:
         rate = float(np.median(rates))
         return rate if rate > 0 else None
 
+    def _birth_decay_factor(self) -> float:
+        """Per-region recovery multiplier, drawn deterministically.
+
+        It used to come from self._rng, which is not persisted, so a replay
+        could not reproduce a birth. The draw is now a pure function of the
+        step index: same history in, same region out.
+        """
+        r = np.random.default_rng((int(self._total_steps) * 2654435761) % (2 ** 32))
+        f = 1.0 + float(r.normal(0.0, self.decay_spread))
+        return max(f, 0.05)
+
+
     def _birth_depth(self, scale: float) -> float:
         """
         Depth a newly created region starts with.
@@ -932,9 +950,13 @@ class StateSpace:
         assignments to estimate an interval keep the unscaled rate.
         """
         if rng is None:
-            rng = np.random.default_rng()
+            # 2026-11-08: 确定性重放要求同一 total_steps 得到同一抖动。
+            # 之前用 default_rng() 无种子，重放结果不可能一致，durable replay 无从谈起。
+            rng = np.random.default_rng(self._total_steps)
         r = self.recover_rate
         every = max(int(self._recover_every_hint), 1)
+        if self.journal is not None:
+            self.journal.append_recover(int(self._total_steps))
 
         # Current half-life in steps at the base rate.
         if r > 0:
