@@ -1,1 +1,0 @@
-scripts: verify.ps1 - one command to run a timed observation session
