@@ -195,15 +195,13 @@ def load_l2(field, name: str = "l2.pkl") -> bool:
     return True
 
 
-def save_l5(stream, name: str = "l5.pkl") -> Path:
-    """
-    L5: attractors, dynamical state, zero point.
+def build_l5_payload(stream) -> dict:
+    """L5 payload as plain data.
 
-    Attractor centroids, depths and characteristic scales are what must
-    survive a move to another carrier. Member buffers are stored because
-    they determine the measured characteristic scale.
+    Split out of save_l5 so that a carrier (src/common/carrier.py) can ship the
+    same bytes to another machine without going through pickle, and so that a
+    test can compare two carriers without touching the disk format.
     """
-    d = _ensure()
     ls = stream.landscape
     attrs = [
         {
@@ -215,7 +213,7 @@ def save_l5(stream, name: str = "l5.pkl") -> Path:
         }
         for a in ls.state_space.attractors()
     ]
-    payload = {
+    return {
         "attractors": attrs,
         "graph": stream.graph.to_dict(),
         "identity": {
@@ -231,8 +229,13 @@ def save_l5(stream, name: str = "l5.pkl") -> Path:
         "global_scale": ls.state_space.global_scale,
         "recent": list(ls.state_space._recent),
     }
+
+
+def save_l5(stream, name: str = "l5.pkl") -> Path:
+    """L5 checkpoint. See build_l5_payload for the contents."""
+    d = _ensure()
     p = d / name
-    _atomic_dump(payload, p)
+    _atomic_dump(build_l5_payload(stream), p)
     return p
 
 
@@ -240,12 +243,20 @@ def load_l5(stream, name: str = "l5.pkl") -> bool:
     p = _ensure() / name
     if not p.exists():
         return False
-    from src.L5_cognition.terrain import Attractor
-    from src.L5_cognition.dynamics import DynamicState
-
     with p.open("rb") as f:
         payload = pickle.load(f)
+    apply_l5_payload(stream, payload)
+    return True
 
+def apply_l5_payload(stream, payload: dict) -> None:
+    """Restore a stream from plain payload data (see build_l5_payload).
+
+    The body below is the restore logic that used to live inside load_l5.
+    It was moved, not rewritten: every backward-compatibility case here was
+    paid for by a real incident and is kept verbatim.
+    """
+    from src.L5_cognition.terrain import Attractor
+    from src.L5_cognition.dynamics import DynamicState
     ls = stream.landscape
     raw = payload.get("attractors")
     if raw is None:
@@ -327,8 +338,6 @@ def load_l5(stream, name: str = "l5.pkl") -> bool:
     # before the floor was applied at the end of that same step.
     ls.state_space._apply_scale_floor()
     ls.state_space._scale_floor_pending = False
-
-    return True
 
 
 def save_acc(accumulator, name: str = "acc.pkl") -> Path:
