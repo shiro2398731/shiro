@@ -231,11 +231,44 @@ def build_l5_payload(stream) -> dict:
     }
 
 
+SAVE_MAGNITUDE_LIMIT = 1e6
+
+
+def assert_l5_finite(payload: dict) -> None:
+    """Refuse to checkpoint a shape that has already blown up.
+
+    2026-11-08: a runaway during testing wrote 617 regions whose centroids
+    reached 1e306 and then nan. Every later load inherited the damage, and
+    the only way back was a backup. A bad state must never become a
+    checkpoint: refusing here costs one interrupted run, accepting it costs
+    the archive.
+    """
+    import numpy as _np
+    attrs = payload.get("attractors") or []
+    for i, d in enumerate(attrs):
+        mu = _np.asarray(d["mu"], dtype=float)
+        if not _np.isfinite(mu).all():
+            raise ValueError(f"attractor {i} centroid is not finite; refusing to save")
+        amp = float(d["amp"])
+        if not _np.isfinite(amp):
+            raise ValueError(f"attractor {i} depth is not finite; refusing to save")
+        # A finite but absurd magnitude is just as dead as a nan: the runaway
+        # that damaged the archive sat at 1e306 before it overflowed. Observed
+        # centroids live around 4.5 (max 27 on the diagnostic checkpoint), so
+        # 1e6 is a bound, not a criterion.
+        if float(_np.abs(mu).max()) > SAVE_MAGNITUDE_LIMIT:
+            raise ValueError(
+                f"attractor {i} centroid magnitude {float(_np.abs(mu).max()):.3e} "
+                f"exceeds {SAVE_MAGNITUDE_LIMIT:.0e}; refusing to save")
+
+
 def save_l5(stream, name: str = "l5.pkl") -> Path:
     """L5 checkpoint. See build_l5_payload for the contents."""
     d = _ensure()
     p = d / name
-    _atomic_dump(build_l5_payload(stream), p)
+    payload = build_l5_payload(stream)
+    assert_l5_finite(payload)
+    _atomic_dump(payload, p)
     return p
 
 

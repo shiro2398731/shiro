@@ -652,6 +652,10 @@ class StateSpace:
         from data, never configured (see Attractor.sigma).
         """
         x = np.asarray(x, dtype=float)
+        # A non-finite state would poison every centroid it is assigned to,
+        # and the damage is permanent once checkpointed. Stop here instead.
+        if not np.isfinite(x).all():
+            raise ValueError("non-finite observation; refusing to record")
         if self.journal is not None:
             self.journal.append_observe(x)
         self._update_global_scale(x)
