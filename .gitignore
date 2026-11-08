@@ -40,3 +40,7 @@ desktop.ini
 *.tiff
 *.jp2
 *.hgt
+
+# her body bundles are state, not source
+*.bundle
+her.bundle

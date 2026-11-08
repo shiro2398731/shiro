@@ -88,10 +88,9 @@ def _atomic_dump(payload, path: Path) -> None:
             pass
         raise
 
-def save_l0(net, name: str = "l0.pkl") -> Path:
-    """L0：神经元状态与连接。不含任何波形历史。"""
-    d = _ensure()
-    payload = {
+def build_l0_payload(net) -> dict:
+    """L0 payload as plain data (arrays + scalars). No history, no waveform."""
+    return {
         "E_v": net.E_v, "E_w": net.E_w,
         "I_v": net.I_v, "I_w": net.I_w,
         "mid_v": net.mid_v, "mid_w": net.mid_w,
@@ -101,8 +100,13 @@ def save_l0(net, name: str = "l0.pkl") -> Path:
         "step_count": net.step_count,
         "envelope_A": getattr(net, "envelope_A", None),
     }
+
+
+def save_l0(net, name: str = "l0.pkl") -> Path:
+    """L0：神经元状态与连接。不含任何波形历史。"""
+    d = _ensure()
     p = d / name
-    _atomic_dump(payload, p)
+    _atomic_dump(build_l0_payload(net), p)
     return p
 
 
@@ -120,6 +124,14 @@ def load_l0(net, name: str = "l0.pkl") -> bool:
     return True
 
 
+def build_l1_payload(predictor) -> dict:
+    """L1 payload: the ridge weights and the last projection."""
+    return {
+        "W_pred": predictor.W_pred,
+        "prev_vec": getattr(predictor, "_prev_vec", None),
+    }
+
+
 def save_l1(predictor, name: str = "l1.pkl") -> Path:
     """L1：预测器权重与上一帧投影。
 
@@ -133,12 +145,8 @@ def save_l1(predictor, name: str = "l1.pkl") -> Path:
     会被 load_l1 的 hasattr 检查忽略，代价只是重启后第一帧少一段历史。
     """
     d = _ensure()
-    payload = {
-        "W_pred": predictor.W_pred,
-        "prev_vec": getattr(predictor, "_prev_vec", None),
-    }
     p = d / name
-    _atomic_dump(payload, p)
+    _atomic_dump(build_l1_payload(predictor), p)
     return p
 
 
@@ -154,13 +162,9 @@ def load_l1(predictor, name: str = "l1.pkl") -> bool:
     return True
 
 
-def save_l2(field, name: str = "l2.pkl") -> Path:
-    """
-    L2：各维归一化历史、协方差样本、上一帧向量。
-    这些决定"她怎么理解自己的状态"，比任何单帧数值都重要。
-    """
-    d = _ensure()
-    payload = {
+def build_l2_payload(field) -> dict:
+    """L2 payload: the normalisation histories that define how she reads herself."""
+    return {
         "dim_hist": [list(h) for h in field._dim_hist],
         "vec_hist": list(field._vec_hist),
         "s_t_hist": list(field.s_t_hist),
@@ -171,8 +175,16 @@ def save_l2(field, name: str = "l2.pkl") -> Path:
         "per_up_ratio": list(field.per_up_ratio),
         "per_step_hist": list(field.per_step_hist),
     }
+
+
+def save_l2(field, name: str = "l2.pkl") -> Path:
+    """
+    L2：各维归一化历史、协方差样本、上一帧向量。
+    这些决定"她怎么理解自己的状态"，比任何单帧数值都重要。
+    """
+    d = _ensure()
     p = d / name
-    _atomic_dump(payload, p)
+    _atomic_dump(build_l2_payload(field), p)
     return p
 
 
@@ -373,12 +385,16 @@ def apply_l5_payload(stream, payload: dict) -> None:
     ls.state_space._scale_floor_pending = False
 
 
+def build_acc_payload(accumulator) -> dict:
+    """The slow accumulator: her pressure level, which must survive the trip."""
+    return {"P": accumulator.P, "hist": list(accumulator._hist)}
+
+
 def save_acc(accumulator, name: str = "acc.pkl") -> Path:
     """慢累积量：她的"压力"水平，跨会话必须延续。"""
     d = _ensure()
-    payload = {"P": accumulator.P, "hist": list(accumulator._hist)}
     p = d / name
-    _atomic_dump(payload, p)
+    _atomic_dump(build_acc_payload(accumulator), p)
     return p
 
 
