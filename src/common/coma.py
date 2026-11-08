@@ -112,7 +112,9 @@ class ComaState:
     uptime_s: float = 0.0                 # 累计清醒秒数
     coma_s: float = 0.0                   # 累计昏迷秒数
     coma_events: int = 0                  # 昏迷事件数
-    last_gap_s: float = 0.0               # 本次启动前的 gap
+    last_gap_s: float = 0.0               # 本次启动前的 gap（= 真正没在运行的那段）
+    rewound_s: float = 0.0                # 累计被回滚掉的清醒时间（状态倒退量）
+    last_rewound_s: float = 0.0            # 本次启动回滚了多少
     steps_per_second: float = 0.0          # 实测步率（墙钟→步数的换算，供 L5/L3 用）
     encoder_id: str = ""                  # 钉死状态空间的几何来源
 
@@ -157,36 +159,63 @@ def save(state: ComaState, state_dir: Path | str = STATE_DIR) -> Path:
     return p
 
 
-def begin_session(state_dir: Path | str = STATE_DIR) -> tuple[ComaState, float]:
-    """启动时调用一次（只由 P1 调用）。
+def begin_session(
+    state_dir: Path | str = STATE_DIR,
+    activity_paths: tuple[str, ...] = ("data/logs/events.jsonl", "data/logs/observations.jsonl"),
+) -> tuple[ComaState, float]:
+    """Startup hook (called by P1 only).
 
-    返回 (账本, 本次 gap 秒)。首次运行 gap = 0。
+    Returns (ledger, gap seconds).
 
-    gap 的含义是"她不在的墙钟时长"。即使 gap 很小（崩溃快启），也计进 coma_s：
-    那段时间她确实不在。只有超过阈值的 gap 才计一次 coma_event，
-    因为"崩了一下"和"关机一夜"不是同一件事。
+    Two different quantities, deliberately kept apart
+    -------------------------------------------------
+    gap      : how long she was not running at all.
+    rewound  : how much awake time was thrown away, because the state she
+               resumes from is the last checkpoint, not the moment she died.
+
+    The old version used now - saved_at for the gap, which conflated the two:
+    it charged the rollback window as if it were unconsciousness. With a 300 s
+    persist interval and an L5 rate of ~2 steps/s that is up to 585 steps of
+    lived time silently restored from the past. A snapshot is a compression
+    artifact, not her time base; rewound_s is the number that says so.
+
+    Activity is taken from the append-only logs, which are never rolled back.
     """
     state = load(state_dir)
     now = _utcnow()
 
-    # 先把上次会话已经醒着的那段时间结算进 uptime_s
     boot = _parse_ts(state.last_boot_at)
     if boot is not None:
         state.uptime_s += max((now - boot).total_seconds(), 0.0)
 
+    last_activity: Optional[datetime] = None
+    for rel in activity_paths:
+        try:
+            m = datetime.fromtimestamp(Path(rel).stat().st_mtime, tz=timezone.utc)
+        except OSError:
+            continue
+        if last_activity is None or m > last_activity:
+            last_activity = m
+
     saved = _parse_ts(state.saved_at)
-    gap_s = 0.0 if saved is None else max((now - saved).total_seconds(), 0.0)
+    reference = max([x for x in (last_activity, saved) if x is not None], default=None)
+
+    gap_s = 0.0 if reference is None else max((now - reference).total_seconds(), 0.0)
+    rewound_s = 0.0
+    if last_activity is not None and saved is not None and last_activity > saved:
+        rewound_s = (last_activity - saved).total_seconds()
 
     state.session_id += 1
     state.last_gap_s = gap_s
+    state.last_rewound_s = rewound_s
     state.coma_s += gap_s
+    state.rewound_s += rewound_s
     if gap_s > COMA_THRESHOLD_S:
         state.coma_events += 1
     state.last_boot_at = _iso(now)
     state.saved_at = _iso(now)
     save(state, state_dir)
     return state, gap_s
-
 
 def mark_saved(state_dir: Path | str = STATE_DIR) -> None:
     """落盘后调用。
@@ -270,5 +299,6 @@ def describe(state: ComaState) -> str:
         f"session={state.session_id} | "
         f"uptime={total_uptime_s(state) / 3600.0:.2f}h | "
         f"coma={state.coma_s / 3600.0:.2f}h/{state.coma_events}次 | "
+        f"rewound={state.rewound_s:.0f}s | "
         f"last_gap={state.last_gap_s:.1f}s"
     )

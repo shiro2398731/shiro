@@ -1235,7 +1235,9 @@ def main() -> int:
     dev_hist = collections.deque(maxlen=100)
     last_report = 0.0
     last_persist = 0.0
-    PERSIST_INTERVAL_S = 300.0    # 5 分钟存一次形状（工程标度，B 类）
+    # 2026-11-08: 300 s 意味着她死后被恢复成五分钟前的自己 —— 那是回滚，不是昏迷。
+    # 实测一次全量落盘 12 ms（l0+l1+l2+acc），5 s 间隔占 0.24% CPU；回滚窗口 300s -> 5s。
+    PERSIST_INTERVAL_S = 5.0
     # 实测步率的采样起点：L5/L3 的昏迷补偿要用它把墙钟换算成步数。
     rate_t0 = time.time()
     rate_steps0 = net.step_count

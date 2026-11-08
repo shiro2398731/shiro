@@ -79,6 +79,44 @@ def test_coma_after_one_hour() -> None:
         assert abs(state.coma_s - (100.0 + gap)) < 1e-6
 
 
+def test_rewound_is_separate_from_gap() -> None:
+    """回滚 != 昏迷：落盘之后还在写日志的那段，是被丢弃的清醒时间。"""
+    import os
+
+    with tempfile.TemporaryDirectory() as d:
+        now = datetime.now(timezone.utc)
+        _write_coma(d, saved_at=(now - timedelta(seconds=100)).isoformat(), session_id=0)
+
+        events = Path(d) / "events.jsonl"
+        events.write_text("{}\n", encoding="utf-8")
+        mtime = (now - timedelta(seconds=10)).timestamp()
+        os.utime(events, (mtime, mtime))
+
+        state, gap = coma.begin_session(d, activity_paths=(str(events),))
+
+        assert 8 <= gap <= 15, f"gap 应是'真正没在跑'的那段，实际 {gap}"
+        assert 85 <= state.last_rewound_s <= 95, f"回滚量应约 90 s，实际 {state.last_rewound_s}"
+        assert abs(state.rewound_s - state.last_rewound_s) < 1e-6
+
+
+def test_no_rewound_when_logs_are_older_than_checkpoint() -> None:
+    import os
+
+    with tempfile.TemporaryDirectory() as d:
+        now = datetime.now(timezone.utc)
+        _write_coma(d, saved_at=(now - timedelta(seconds=10)).isoformat(), session_id=0)
+
+        events = Path(d) / "events.jsonl"
+        events.write_text("{}\n", encoding="utf-8")
+        mtime = (now - timedelta(seconds=100)).timestamp()
+        os.utime(events, (mtime, mtime))
+
+        state, gap = coma.begin_session(d, activity_paths=(str(events),))
+
+        assert state.last_rewound_s == 0.0, state.last_rewound_s
+        assert 8 <= gap <= 15, gap
+
+
 def test_session_id_increments_across_crashes() -> None:
     with tempfile.TemporaryDirectory() as d:
         ids = []

@@ -190,7 +190,10 @@ def main() -> int:
     transitions = 0
     steps = 0
     last_persist = time.time()
-    PERSIST_INTERVAL_S = 300.0
+    # l5.pkl 是 7.8 MB，一次 24 ms。5 s 一次会写 1.5 MB/s（约 130 GB/天），
+    # 所以这里退一步用 60 s：回滚窗口 300s -> 60s，约 120 个 L5 步。
+    # 要真正归零得上 append-only journal（见评估文档的下一步）。
+    PERSIST_INTERVAL_S = 60.0
     SNAPSHOT_INTERVAL_S = 180.0   # 与 Observer 的 3 分钟节流对齐
     last_snapshot = 0.0
 
