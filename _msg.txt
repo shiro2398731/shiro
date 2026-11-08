@@ -1,0 +1,10 @@
+persist: write state atomically so a reboot cannot truncate a shape
+
+A hard kill during save_* used to truncate the target .pkl in place, which
+would lose the whole shape rather than the last few minutes. The payload now
+goes to <name>.tmp, is fsynced, and only then replaces the target. On failure
+the previous file is left untouched and the tmp is removed.
+
+tests/test_persist_atomic.py drives the failure path: it forces pickle.dump to
+raise mid-write and asserts the old bytes are still there and no tmp remains.
+3/3 pass, and the coma / birth-depth suites still pass (12/12, 4/4).

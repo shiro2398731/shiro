@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import collections
 import json
+import os
 import pickle
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,6 +64,30 @@ def _ensure() -> Path:
 # 各层的形状
 # ============================================================
 
+def _atomic_dump(payload, path: Path) -> None:
+    """Write a payload so that a hard kill cannot leave a truncated file.
+
+    2026-11-08: a reboot mid-save used to truncate the target .pkl, because
+    save_* wrote straight into it. The loss would be the whole shape, not the
+    last few minutes. The payload now goes to <name>.tmp, is fsynced, and only
+    then replaces the target.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with tmp.open("wb") as f:
+            pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        # Leave the previous file untouched; do not keep a half-written tmp.
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+        raise
+
 def save_l0(net, name: str = "l0.pkl") -> Path:
     """L0：神经元状态与连接。不含任何波形历史。"""
     d = _ensure()
@@ -77,8 +102,7 @@ def save_l0(net, name: str = "l0.pkl") -> Path:
         "envelope_A": getattr(net, "envelope_A", None),
     }
     p = d / name
-    with p.open("wb") as f:
-        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+    _atomic_dump(payload, p)
     return p
 
 
@@ -114,8 +138,7 @@ def save_l1(predictor, name: str = "l1.pkl") -> Path:
         "prev_vec": getattr(predictor, "_prev_vec", None),
     }
     p = d / name
-    with p.open("wb") as f:
-        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+    _atomic_dump(payload, p)
     return p
 
 
@@ -149,8 +172,7 @@ def save_l2(field, name: str = "l2.pkl") -> Path:
         "per_step_hist": list(field.per_step_hist),
     }
     p = d / name
-    with p.open("wb") as f:
-        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+    _atomic_dump(payload, p)
     return p
 
 
@@ -210,8 +232,7 @@ def save_l5(stream, name: str = "l5.pkl") -> Path:
         "recent": list(ls.state_space._recent),
     }
     p = d / name
-    with p.open("wb") as f:
-        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+    _atomic_dump(payload, p)
     return p
 
 
@@ -315,8 +336,7 @@ def save_acc(accumulator, name: str = "acc.pkl") -> Path:
     d = _ensure()
     payload = {"P": accumulator.P, "hist": list(accumulator._hist)}
     p = d / name
-    with p.open("wb") as f:
-        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+    _atomic_dump(payload, p)
     return p
 
 
