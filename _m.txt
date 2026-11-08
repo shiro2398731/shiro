@@ -1,1 +1,1 @@
-tools/watch: write the csv incrementally so a long run is not lost on interrupt
+scripts: verify.ps1 - one command to run a timed observation session
