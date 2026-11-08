@@ -1119,6 +1119,7 @@ def main() -> int:
     # ---- A stale process on another host keeps running if it likes, but its
     # ---- fence check will fail and it stops acting. No liveness assumptions.
     from src.common import epoch as epoch_mod
+    from src.common import control as control_mod
     _me = epoch_mod.default_holder()
     _epoch_state, my_epoch = epoch_mod.claim(holder=_me, ttl_s=15.0, wait_s=30.0,
                                             reason="P1 boot")
@@ -1387,6 +1388,32 @@ def main() -> int:
                 if not epoch_mod.heartbeat(my_epoch):
                     print("[P1] fenced: epoch moved, stopping instead of acting")
                     break
+                # control channel: a file, not a terminal (src/common/control.py)
+                _cmd = control_mod.poll()
+                if _cmd is not None:
+                    _name = _cmd.get("cmd")
+                    if _name == "stop":
+                        # Stopping is retiring the epoch: every process she has
+                        # sees it, so one file stops all of them.
+                        control_mod.reply(_cmd["id"], ok=True,
+                                          result={"stopped_by": "P1", "epoch": my_epoch})
+                        control_mod.done(_cmd["id"], _cmd)
+                        print("[P1] control: stop")
+                        epoch_mod.retire(my_epoch, reason="control stop")
+                        running["flag"] = False
+                        break
+                    else:
+                        control_mod.reply(_cmd["id"], ok=True, result={
+                            "epoch": my_epoch,
+                            "step_count": int(net.step_count),
+                            "pressure": round(float(net.accumulator.P), 4),
+                            "session_id": int(coma_state.session_id),
+                            "uptime_h": round(coma_mod.total_uptime_s(coma_state) / 3600.0, 3),
+                            "coma_h": round(float(coma_state.coma_s) / 3600.0, 3),
+                            "rewound_s": round(float(coma_state.rewound_s), 1),
+                        })
+                        control_mod.done(_cmd["id"], _cmd)
+                        control_mod.done_counter = 0
 
             time.sleep(0.001)
     finally:
