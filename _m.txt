@@ -1,0 +1,35 @@
+fix: make P2 runnable and make start/stop scripts reliable
+
+Found by actually running the three processes, not by reading them.
+
+process_2_mind.py
+  - the L5 snapshot read ss = stream.broadcast_state() and then asked for
+    ss["n_attractors"]. broadcast_state() is deliberately minimal (downstream
+    only reads attractor_id), so this raised KeyError on the very first step and
+    P2 never produced an L5 record in this tree. It now calls stream_state()
+    only when a snapshot is actually due (stream_state() re-runs viability over
+    every region, so it must not run per step), and keeps broadcast_state() for
+    the bus payload.
+  - ev.from_trace / ev.to_trace do not exist; Transition carries
+    from_attractor / to_attractor. This was the second crash.
+
+scripts/stop_all.ps1
+  - .venv\Scripts\python.exe is a launcher that spawns the real interpreter as
+    a child, and both carry the module name in their command line. Killing the
+    launcher left the child alive holding 5560/5561/5562, so the next start
+    crash-looped on bind. Measured: stop_all reported "done" with all six
+    processes still alive. Now kills trees (taskkill /F /T), verifies, retries
+    once, and exits 1 if anything survives.
+
+scripts/start_all.ps1
+  - refuses to start a second set (exit 2) unless -Force is given. Two sets
+    fight over the ports and the loser dies through its supervisor, which looks
+    like "it started but nothing is recorded".
+
+tools/watch.py (new)
+  - samples observations.jsonl every window (default 180 s, matching the
+    Observer throttle), prints a row, writes CSV, and at the end judges the run
+    against the criteria in the audit section 7: attractor count in band, no
+    frozen structure (5 windows unchanged), no speed blowup, no NaN/Inf,
+    pressure not pinned at the ceiling. Seeds from the last known state so the
+    first row is not empty.

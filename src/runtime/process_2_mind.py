@@ -191,6 +191,8 @@ def main() -> int:
     steps = 0
     last_persist = time.time()
     PERSIST_INTERVAL_S = 300.0
+    SNAPSHOT_INTERVAL_S = 180.0   # 与 Observer 的 3 分钟节流对齐
+    last_snapshot = 0.0
 
     # L5 不被定时器驱动，而由上游的新鲜度驱动：
     # 只在收到新消息、或环境已经变了足够久时才推进一步。
@@ -223,31 +225,43 @@ def main() -> int:
             if ev is not None:
                 transitions += 1
                 observer.event("transition", {
-                    "from": ev.from_trace,
-                    "to": ev.to_trace,
-                    "noise_driven": ev.noise_driven,
+                    "from": ev.from_attractor,
+                    "to": ev.to_attractor,
+                    "noise_driven": ev.noise_driven,  # Transition 的真实字段
                 })
 
             # 观测快照（3 分钟一次）
-            ss = stream.broadcast_state()
-            observer.snapshot("L5", {
-                "steps": steps,
-                "attractors": ss["n_attractors"],
-                "n_salient": ss["n_salient"],
-                "speed": round(ss["speed"], 4),
-                "potential": round(ss["potential"], 4),
-                "noise": round(stream.landscape.noise_amplitude, 5),
-                "transitions": transitions,
-                # L3
-                "edges": ss["n_edges"],
-                "recall": ss["recall"],
-                # L4
-                "tensions": ss["tensions"]["n"],
-                "tension_sum": ss["tensions"]["sum"],
-                # L8
-                "identity": ss["identity"],
-                "id_rounds": stream.identity.rounds,
-            })
+            #
+            # broadcast_state() 只带广播需要的最少字段（下游只读 attractor_id），
+            # 不能拿来当快照：这里原本写 ss = stream.broadcast_state()，
+            # 于是 ss["n_attractors"] 直接 KeyError，P2 每次启动第一望就崩
+            # （既有缺陷，原版 shiro 同样如此）。
+            #
+            # 而 stream_state() 会重算 viability（O(区域数)），不能每步调用，
+            # 所以用本地定时器控频，Observer 侧再 force=True 保证一定写进去。
+            bs = stream.broadcast_state()
+            now_t = time.time()
+            if now_t - last_snapshot >= SNAPSHOT_INTERVAL_S:
+                last_snapshot = now_t
+                ss = stream.stream_state()
+                observer.snapshot("L5", {
+                    "steps": steps,
+                    "attractors": ss["n_attractors"],
+                    "n_salient": ss["n_salient"],
+                    "speed": round(ss["speed"], 4),
+                    "potential": round(ss["potential"], 4),
+                    "noise": round(stream.landscape.noise_amplitude, 5),
+                    "transitions": transitions,
+                    # L3
+                    "edges": ss["n_edges"],
+                    "recall": ss["recall"],
+                    # L4
+                    "tensions": ss["tensions"]["n"],
+                    "tension_sum": ss["tensions"]["sum"],
+                    # L8
+                    "identity": ss["identity"],
+                    "id_rounds": stream.identity.rounds,
+                }, force=True)
 
             # 发布 l5.state.stream。P4（L6）靠它拿符号，P3 靠它记录。
             # payload carries a vector, but L6 may read attractor_id only
@@ -255,9 +269,9 @@ def main() -> int:
             bus.publish(
                 "l5.state.stream",
                 StreamState(
-                    x_t=ss["x"],
-                    attractor_id=str(ss["attractor_id"]),
-                    landscape_energy=float(ss["potential"]),
+                    x_t=bs["x"],
+                    attractor_id=str(bs["attractor_id"]),
+                    landscape_energy=float(bs["potential"]),
                     timestamp=datetime.now(timezone.utc).isoformat(),
                 ),
             )
