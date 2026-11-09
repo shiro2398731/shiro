@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.common import bundle, epoch, persist  # noqa: E402
+from src.common import bundle, epoch, persist, rolling  # noqa: E402
 from src.runtime.process_1_fast import FHNNetwork, L1Predictor, L2StateField  # noqa: E402
 from src.L5_cognition.stream import Stream  # noqa: E402
 
@@ -107,6 +107,12 @@ def cmd_unpack(args) -> int:
     return 0
 
 
+def cmd_roll(args) -> int:
+    r = rolling.rotate(args.out, keep=args.keep, journal_path=args.journal)
+    print(json.dumps(r, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -128,6 +134,12 @@ def main() -> int:
     u.add_argument("bundle")
     u.add_argument("--take-over", action="store_true")
     u.set_defaults(fn=cmd_unpack)
+
+    r = sub.add_parser("roll")
+    r.add_argument("--out", default="data/bundles")
+    r.add_argument("--keep", type=int, default=3)
+    r.add_argument("--journal", default="data/journal/l5.wal")
+    r.set_defaults(fn=cmd_roll)
 
     args = ap.parse_args()
     return args.fn(args)
