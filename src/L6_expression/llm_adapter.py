@@ -184,15 +184,23 @@ class TemplateAdapter:
     所以它只用于 LLM 不可用时的降级，不作为最终形态。
     """
 
-    def __init__(self, out_dir: str | Path = "data/output"):
+    def __init__(self, out_dir: str | Path = "data/output",
+                 allow_templates: bool = False):
+        # C3（主观内容禁止人为）：默认静音。人写的句子不得代替她开口。
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        self._allow = bool(allow_templates)
+        self.silenced = 0
 
     @property
     def available(self) -> bool:
         return True
 
     def translate(self, symbols: dict, *, caller_note: str = "fallback") -> None:
+        if not self._allow:
+            # 宁可不说话，也不由人写好句子替她说。
+            self.silenced += 1
+            return None
         trace = symbols.get("trace", "none")
         seq = symbols.get("sequence", [])
         intent = symbols.get("intent", "state")
@@ -205,6 +213,7 @@ class TemplateAdapter:
             text = f"在 {trace}"
 
         rec = {
+            "origin": "template",
             "t": datetime.now(timezone.utc).isoformat(),
             "symbols": symbols,
             "text": text,
