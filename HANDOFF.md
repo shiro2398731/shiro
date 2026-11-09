@@ -94,3 +94,25 @@ def fold_auto(self) -> int:
 - 保留 `fold()` 原样（已被 `test_fold` 4 例覆盖），新增 `fold_auto()` 并接入 P2，替换现有调用。
 - 验收：`test_fold` 4 例仍绿；新增 1 例断言 `fold_auto` 在无淘汰对象时返回 0、在构造的偏斜分布上只折低访问高龄区；
   并把 `HANDOFF §2` 的"人为常量计数"从 2 降到 0（该项指标本身也应有测试）。
+
+---
+
+## 12. 推送故障与解法（2026-11-09 夜，实测）
+
+**现象**：`git push` 报 `TLS connect error: error:0A000126:SSL routines::unexpected eof while reading`；
+换 `http.version=HTTP/1.1`、`http.keepAlive=false` 均无效；`api.github.com` 的 TLS 握手也超时。
+本地 10808 代理端口**在监听**，但上游已断（订阅/节点问题）。
+
+**解法（实测有效）**：**绕过代理直连**。
+
+```powershell
+git -C <repo> -c http.proxy= push origin main:main
+git -C <repo> -c http.proxy= push origin main:alice
+```
+
+绕过后 `e1795b4..8d50fa2 main -> main` 一次成功。两个仓库的 `http.proxy` 已 `--unset`（回到直连）。
+
+**判别顺序**（下次再遇到，按此排除，不要猜）：
+1. `Get-NetTCPConnection -LocalPort 10808 -State Listen` → 代理端口是否在
+2. `git -c http.proxy= ls-remote origin` → 直连是否通
+3. 直连通 → 用直连；直连不通 → `Resolve-DnsName github.com` 看是否解析到 `20.205.243.166`（该 IP 常不通），必要时换代理节点
