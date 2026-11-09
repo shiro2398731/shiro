@@ -163,6 +163,12 @@ def main() -> int:
         return 3
     print(f"[P2] epoch {my_epoch}")
 
+    # M1 接线：自我预测误差只调节探索强度（adaptive_gain），不替代动力学。
+    # 一阶基线用"预期不变"做预测器；SelfModel 是升级路径（HANDOFF §3.1）。
+    from src.L5_cognition.adaptive_gain import ErrorDrivenGain
+    _selfgain = ErrorDrivenGain()
+    _prev_aid = None
+
     running = {"flag": True}
 
     def on_surprise(topic, obj):
@@ -255,7 +261,7 @@ def main() -> int:
                 continue
 
             # 噪声与偏转都由上游实测给出
-            stream.landscape.set_noise_amplitude(runner.noise_amplitude())
+            stream.landscape.set_noise_amplitude(runner.noise_amplitude() * _selfgain.gain())
             stream.landscape.set_deflection(runner.deflection())
 
             ev = stream.step()
@@ -278,6 +284,14 @@ def main() -> int:
             # 而 stream_state() 会重算 viability（O(区域数)），不能每步调用，
             # 所以用本地定时器控频，Observer 侧再 force=True 保证一定写进去。
             bs = stream.broadcast_state()
+            try:
+                _aid = int(bs["attractor_id"])
+            except Exception:
+                _aid = None
+            if _aid is not None and _aid >= 0:
+                if _prev_aid is not None:
+                    _selfgain.observe(_prev_aid == _aid)   # 预期不变
+                _prev_aid = _aid
             now_t = time.time()
             if now_t - last_snapshot >= SNAPSHOT_INTERVAL_S:
                 last_snapshot = now_t
