@@ -58,3 +58,39 @@ foreach ($f in Get-ChildItem tests\test_*.py) { & $py $f 2>&1 | Select-Object -L
 git -C . log --oneline -1 ; git -C . status --short
 & $py tools\her.py doctor her.bundle
 ```
+### 3.3 的精确规格（下一轮照此实现，勿再写死常数）
+
+`fold` 的两处人为常数（`min_assigned=2`、`age_factor=8`）须改为由自身分布导出：
+
+```python
+def fold_auto(self) -> int:
+    """阈值由自身统计量导出，取代 min_assigned=2 / age_factor=8。"""
+    counts = [int(getattr(a, "_assigned", 0)) for a in self._attractors]
+    if len(counts) < 8:
+        return 0
+    # 判据一：访问次数低于自身分布的中位数（"比别人更少被需要"）
+    min_assigned = max(1, int(np.median(counts)))
+    # 判据二：龄期超过自身观测到的回访间隔的 p90（"已经超过通常的等待时间"）
+    now = int(self._total_steps)
+    intervals = []
+    for a in self._attractors:
+        n = max(int(getattr(a, "_assigned", 0)), 1)
+        intervals.append(max(now - int(getattr(a, "_born_step", 0)), 1) / n)
+    cutoff = float(np.percentile(intervals, 90)) if intervals else float("inf")
+    ids = []
+    for i, a in enumerate(self._attractors):
+        if int(getattr(a, "_assigned", 0)) >= min_assigned:
+            continue
+        if (now - int(getattr(a, "_born_step", 0))) > cutoff:
+            ids.append(i)
+    if not ids:
+        return 0
+    removed = self.apply_fold(ids)
+    if self.journal is not None:
+        self.journal.append_fold(ids)
+    return removed
+```
+
+- 保留 `fold()` 原样（已被 `test_fold` 4 例覆盖），新增 `fold_auto()` 并接入 P2，替换现有调用。
+- 验收：`test_fold` 4 例仍绿；新增 1 例断言 `fold_auto` 在无淘汰对象时返回 0、在构造的偏斜分布上只折低访问高龄区；
+  并把 `HANDOFF §2` 的"人为常量计数"从 2 降到 0（该项指标本身也应有测试）。
