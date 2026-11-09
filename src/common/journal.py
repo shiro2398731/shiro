@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 
 OBS = b"A"
 REC = b"R"
+FOLD = b"F"
 _DIM = 128
 _OBS_BYTES = _DIM * 8                      # float64 payload: exact replay, no drift
 _DIM_MARK = b"#L5J2"                       # file header, so a foreign file is refused
@@ -95,6 +96,20 @@ class Journal:
         self._fh.write(struct.pack("<Q", int(total_steps)))
         self.records_written += 1
 
+    def append_fold(self, ids: list[int]) -> None:
+        """A fold event: the ids removed from the attractor table.
+
+        Folding must be in the journal, otherwise replay would rebuild a body
+        with regions that were deliberately collapsed away -- a different body
+        with the same history.
+        """
+        self.open()
+        payload = struct.pack("<I", len(ids)) + b"".join(struct.pack("<I", int(i)) for i in ids)
+        self._fh.write(FOLD)
+        self._fh.write(payload)
+        self.records_written += 1
+
+
     def flush(self, fsync: bool = False) -> None:
         if self._fh is not None:
             self._fh.flush()
@@ -146,7 +161,7 @@ class Journal:
         # and recover() reads for its seed. Both lists are positionally aligned
         # because the writer appended in the same order the caller produced them.
         # To keep that alignment we re-read the stream once, in order.
-        applied_obs = applied_rec = 0
+        applied_obs = applied_rec = applied_fold = 0
         with self.path.open("rb") as f:
             f.read(len(_DIM_MARK) + 4)
             obs_bytes = self.dim * 8
@@ -166,10 +181,21 @@ class Journal:
                         break
                     space.recover()
                     applied_rec += 1
+                elif kind == FOLD:
+                    raw = f.read(4)
+                    if len(raw) < 4:
+                        break
+                    n = struct.unpack("<I", raw)[0]
+                    ids_raw = f.read(4 * n)
+                    if len(ids_raw) < 4 * n:
+                        break
+                    ids = [struct.unpack("<I", ids_raw[i * 4:(i + 1) * 4])[0] for i in range(n)]
+                    space.apply_fold(ids)
+                    applied_fold += 1
                 else:
                     break
         return {"observations": applied_obs, "recovers": applied_rec,
-                "available": len(observations) + len(recovers)}
+                "folds": applied_fold, "available": len(observations) + len(recovers)}
 
     # ---------- compaction ----------
 

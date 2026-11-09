@@ -290,6 +290,9 @@ class StateSpace:
         # 追加式日志（src/common/journal.py）。为 None 时不记录。
         # 记的是'她经历了什么'，不是'她成了什么样'——后者由重放算出来。
         self.journal = None
+
+        # 折叠汇总：被折叠区域的 (量化质心, 深度累加, 计数)，用于载体有界。
+        self._folded: list[dict] = []
         # Recovery cadence hint, set by the caller (Stream) so recovery can
         # relate a rate to a number of steps.
         self._recover_every_hint: int = 16
@@ -905,6 +908,60 @@ class StateSpace:
         if denom <= 0:
             return 0.0
         return float(self.ceiling * num / denom)
+
+    # ---------- folding ----------
+
+    def fold_candidates(self, min_assigned: int = 2, age_factor: float = 8.0) -> list[int]:
+        """Regions to collapse: rarely reached and old relative to the half-life.
+
+        Not a value ranking. The criterion is \"never needed again\" (assigned fewer
+        than `min_assigned` times) and \"old enough that a return is not expected\"
+        (age > age_factor * half_life). Capacity discipline, not mortality: the
+        region is collapsed into a summary, not judged unimportant.
+        """
+        half = self.half_life
+        if not (half > 0) or not np.isfinite(half):
+            half = float("inf")
+        now = int(self._total_steps)
+        out: list[int] = []
+        for i, a in enumerate(self._attractors):
+            if int(getattr(a, "_assigned", 0)) >= int(min_assigned):
+                continue
+            age = now - int(getattr(a, "_born_step", 0))
+            if age > age_factor * half:
+                out.append(i)
+        return out
+
+    def apply_fold(self, ids: list[int]) -> int:
+        """Collapse the given attractor indices into the folded summary."""
+        if not ids:
+            return 0
+        keep = []
+        drop = set(int(i) for i in ids)
+        for i, a in enumerate(self._attractors):
+            if i in drop:
+                self._folded.append({
+                    "mu": np.round(np.asarray(a.mu, dtype=float), 1),
+                    "amp": float(a.amp),
+                    "count": int(getattr(a, "_assigned", 0)),
+                })
+            else:
+                keep.append(a)
+        removed = len(self._attractors) - len(keep)
+        self._attractors = keep
+        self._invalidate_scale()
+        return removed
+
+    def fold(self, min_assigned: int = 2, age_factor: float = 8.0) -> int:
+        """Fold and journal in one step. Returns how many regions were collapsed."""
+        ids = self.fold_candidates(min_assigned=min_assigned, age_factor=age_factor)
+        if not ids:
+            return 0
+        removed = self.apply_fold(ids)
+        if self.journal is not None:
+            self.journal.append_fold(ids)
+        return removed
+
 
     # ---------- recovery ----------
 

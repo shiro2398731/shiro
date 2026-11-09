@@ -317,6 +317,13 @@ def main() -> int:
             # 存她此刻的形状
             now = time.time()
             if now - last_persist >= PERSIST_INTERVAL_S:
+                # 折叠：载体有界。判据是"不再被需要"（assigned < 2）且"够旧"
+                # （age > 8 个半衰期），不是价值排序。折叠事件进 journal，可重放。
+                # 放在快照之前：折叠效果先落进检查点，再截断日志，保持一致。
+                _folded = stream.landscape.state_space.fold(min_assigned=2, age_factor=8.0)
+                if _folded:
+                    observer.event("fold", {"removed": int(_folded),
+                                   "live": len(stream.landscape.state_space.attractors())})
                 persist.snapshot_all({"l5": stream})
                 last_persist = now
                 # 检查点已经包含了日志的全部效果，可以截断
