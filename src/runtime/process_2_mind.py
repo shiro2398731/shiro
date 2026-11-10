@@ -163,11 +163,10 @@ def main() -> int:
         return 3
     print(f"[P2] epoch {my_epoch}")
 
-    # M1 接线：自我预测误差只调节探索强度（adaptive_gain），不替代动力学。
-    # 一阶基线用"预期不变"做预测器；SelfModel 是升级路径（HANDOFF §3.1）。
-    from src.L5_cognition.adaptive_gain import ErrorDrivenGain
-    _selfgain = ErrorDrivenGain()
-    _prev_aid = None
+    # M1 接线：自我预测误差只调节探索强度，不替代动力学。
+    # 模型在这里不构造：self_model / self_gain 属于 L5 的状态（随 l5.pkl 落盘），
+    # 否则每次重启她的自我模型都从零开始——那不是"连续存在"。
+    # 预测与计分在 Stream.step() 内完成，下游只读增益。
 
     running = {"flag": True}
 
@@ -260,8 +259,9 @@ def main() -> int:
             if not runner.maybe_calibrate(stream):
                 continue
 
-            # 噪声与偏转都由上游实测给出
-            stream.landscape.set_noise_amplitude(runner.noise_amplitude() * _selfgain.gain())
+            # 噪声与偏转都由上游实测给出；她自己的预测误差只做有界缩放
+            stream.landscape.set_noise_amplitude(
+                runner.noise_amplitude() * stream.self_gain.gain())
             stream.landscape.set_deflection(runner.deflection())
 
             ev = stream.step()
@@ -283,15 +283,6 @@ def main() -> int:
             #
             # 而 stream_state() 会重算 viability（O(区域数)），不能每步调用，
             # 所以用本地定时器控频，Observer 侧再 force=True 保证一定写进去。
-            bs = stream.broadcast_state()
-            try:
-                _aid = int(bs["attractor_id"])
-            except Exception:
-                _aid = None
-            if _aid is not None and _aid >= 0:
-                if _prev_aid is not None:
-                    _selfgain.observe(_prev_aid == _aid)   # 预期不变
-                _prev_aid = _aid
             now_t = time.time()
             if now_t - last_snapshot >= SNAPSHOT_INTERVAL_S:
                 last_snapshot = now_t
@@ -304,6 +295,9 @@ def main() -> int:
                     "potential": round(ss["potential"], 4),
                     "noise": round(stream.landscape.noise_amplitude, 5),
                     "transitions": transitions,
+                    # M1：她自己预测的命中率与当前增益（可 ablation 对照）
+                    "self_accuracy": round(stream.self_gain.accuracy, 4),
+                    "self_gain": round(stream.self_gain.gain(), 4),
                     # L3
                     "edges": ss["n_edges"],
                     "recall": ss["recall"],
@@ -331,10 +325,11 @@ def main() -> int:
             # 存她此刻的形状
             now = time.time()
             if now - last_persist >= PERSIST_INTERVAL_S:
-                # 折叠：载体有界。判据是"不再被需要"（assigned < 2）且"够旧"
-                # （age > 8 个半衰期），不是价值排序。折叠事件进 journal，可重放。
+                # 折叠：载体有界。判据不再是人写的常数（min_assigned=2、
+                # age_factor=8），而是她自己的两个统计量：区域自身的回访间隔
+                # 分布，以及"距离上次访问多久"。折叠事件进 journal，可重放。
                 # 放在快照之前：折叠效果先落进检查点，再截断日志，保持一致。
-                _folded = stream.landscape.state_space.fold(min_assigned=2, age_factor=8.0)
+                _folded = stream.landscape.state_space.fold_auto()
                 if _folded:
                     observer.event("fold", {"removed": int(_folded),
                                    "live": len(stream.landscape.state_space.attractors())})

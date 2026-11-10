@@ -114,6 +114,81 @@ def test_bound_growth_under_periodic_folding() -> None:
     print(f"       live regions per block: {curve}")
 
 
+def _overdue_population() -> StateSpace:
+    """10 regions seen early and never again, 30 busy and recent (of 100k steps)."""
+    ss = StateSpace(dim=8)
+    ss._total_steps = 100_000
+    for i in range(10):
+        a = Attractor(mu=np.full(8, 0.1 * (i + 1)), amp=0.2)
+        a._assigned, a._born_step, a._last_seen_step = 1, 0, 500
+        ss._attractors.append(a)
+    for i in range(30):
+        a = Attractor(mu=np.full(8, -0.1 * (i + 1)), amp=0.5)
+        a._assigned, a._born_step, a._last_seen_step = 30, 99_000, 99_990
+        ss._attractors.append(a)
+    return ss
+
+
+def test_fold_auto_is_silent_without_measurements() -> None:
+    """No measurements -> no folding, rather than a threshold chosen by hand."""
+    small = StateSpace(dim=8)
+    small._total_steps = 1000
+    a = Attractor(mu=np.zeros(8), amp=0.2)
+    a._assigned, a._last_seen_step = 1, 10
+    small._attractors.append(a)
+    assert small.fold_auto() == 0, "one region is not a distribution"
+
+    unknown = _overdue_population()
+    for attr in unknown.attractors():
+        attr._last_seen_step = 0          # legacy record: last visit unknown
+    assert unknown.fold_auto() == 0, "unknown last visit must not be read as 'long ago'"
+    assert len(unknown.attractors()) == 40
+    print("       1 region / unknown last visit: 0 folded")
+
+
+def test_fold_auto_folds_the_overdue_tail() -> None:
+    ss = _overdue_population()
+    removed = ss.fold_auto()
+    assert removed == 10, f"expected the 10 never-returned regions, got {removed}"
+    assert len(ss.attractors()) == 30, len(ss.attractors())
+    assert len(ss._folded) == 10
+    print(f"       folded {removed} overdue -> {len(ss.attractors())} live regions")
+
+
+def test_fold_auto_keeps_recently_visited() -> None:
+    """She is still coming back: nothing folds, whatever the age is."""
+    ss = _overdue_population()
+    for i, a in enumerate(ss.attractors()):
+        a._assigned = 30
+        a._born_step = 0
+        a._last_seen_step = 99_999
+    assert ss.fold_auto() == 0
+    print("       all regions seen at step 99999: 0 folded")
+
+
+def test_age_criterion_folds_nothing_on_the_same_population() -> None:
+    """Why fold_auto uses elapsed-since-visit instead of age since birth.
+
+    On this population the age criterion specified in HANDOFF §3.3 cannot fire:
+    the rarely visited regions are their own oldest sample, so p90(interval)
+    equals the age it is compared against (measured: cutoff 100000.0, age
+    100000 -> 0 candidates).
+    """
+    ss = _overdue_population()
+    now = ss._total_steps
+    counts = [a._assigned for a in ss.attractors()]
+    assign_ceiling = max(1, int(np.median(counts)))
+    intervals = [max(now - a._born_step, 1) / max(a._assigned, 1)
+                 for a in ss.attractors()]
+    cutoff = float(np.percentile(intervals, 90))
+    candidates = [i for i, a in enumerate(ss.attractors())
+                  if a._assigned < assign_ceiling and (now - a._born_step) > cutoff]
+    assert cutoff == float(now), cutoff
+    assert candidates == [], candidates
+    print(f"       age criterion: cutoff={cutoff:.0f} candidates=0; "
+          f"fold_auto folds 10")
+
+
 def main() -> int:
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0

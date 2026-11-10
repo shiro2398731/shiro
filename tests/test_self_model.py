@@ -16,7 +16,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from src.L5_cognition.self_model import online_accuracy  # noqa: E402
+from src.L5_cognition.self_model import OnlineSelfModel, online_accuracy  # noqa: E402
 
 
 def _structured_sequence(n: int = 3000, states: int = 6, noise: float = 0.1) -> list[int]:
@@ -77,6 +77,78 @@ def test_real_archive_sequence() -> None:
     r = online_accuracy(seq)
     print(f"       archive ids={len(ids)}: accuracy={r['accuracy']:.3f} "
           f"chance={r['chance']:.3f} (random walk by construction)")
+
+
+def _cycle(n: int = 400, states: int = 4) -> list[int]:
+    return [i % states for i in range(n)]
+
+
+def _online(seq: list[int]) -> tuple[float, float, int]:
+    """(model accuracy, expect-no-change accuracy, scored steps)."""
+    m = OnlineSelfModel()
+    hits = same = scored = 0
+    prev = None
+    for cur in seq:
+        if prev is not None:
+            pred = m.predict(prev)
+            if pred is not None:
+                scored += 1
+                hits += int(pred == cur)
+                same += int(prev == cur)
+            m.observe(prev, cur)
+        prev = cur
+    return (hits / scored if scored else 0.0,
+            same / scored if scored else 0.0, scored)
+
+
+def test_online_model_beats_expect_no_change() -> None:
+    """The predictor that runs inside L5 must beat the 0th-order baseline.
+
+    On a 4-cycle the baseline "the next region is the current one" is wrong
+    every time, which is the case the previous wiring could not distinguish
+    itself from.
+    """
+    acc, base, scored = _online(_cycle(400))
+    assert scored > 300, scored
+    assert base == 0.0, base
+    assert acc > 0.9, acc
+    print(f"       model={acc:.3f}  expect-same={base:.3f}  scored={scored}")
+
+
+def test_online_model_has_no_advantage_on_noise() -> None:
+    rnd = random.Random(5)
+    seq = [rnd.randrange(6) for _ in range(2000)]
+    acc, _base, scored = _online(seq)
+    chance = 1.0 / 6.0
+    assert acc <= 1.6 * chance, (acc, chance)
+    print(f"       noise: model={acc:.3f} chance={chance:.3f} scored={scored}")
+
+
+def test_self_model_survives_a_restart() -> None:
+    """Her self-model is state, not session: it goes into the L5 payload."""
+    import os
+    os.chdir(pathlib.Path(__file__).resolve().parent.parent)
+    from src.common import persist
+    from src.L5_cognition.stream import Stream
+
+    a = Stream(dim=16)
+    for _ in range(30):
+        for x in range(4):
+            a.self_model.observe(x, (x + 1) % 4)
+            a.self_gain.observe(True)
+    a._last_symbol = 3
+    payload = persist.build_l5_payload(a)
+
+    b = Stream(dim=16)
+    persist.apply_l5_payload(b, payload)
+
+    assert b.self_model.predict(0) == 1, b.self_model.predict(0)
+    assert b.self_model.states_seen == 4, b.self_model.states_seen
+    assert b._last_symbol == 3, b._last_symbol
+    assert b.self_gain.observations == a.self_gain.observations
+    assert abs(b.self_gain.error - a.self_gain.error) < 1e-12
+    print(f"       resumed: states={b.self_model.states_seen} "
+          f"last={b._last_symbol} observations={b.self_gain.observations}")
 
 
 def main() -> int:

@@ -222,12 +222,37 @@ def build_l5_payload(stream) -> dict:
             "scale": a.scale, "born_t": a.born_t,
             "_decay_factor": a._decay_factor,
             "_assigned": a._assigned,
+            # Birth step is part of her age structure, not bookkeeping. It is
+            # the denominator of the per-region visit rate, which is what
+            # _birth_depth() uses to decide how deep a new region starts. It
+            # was missing from this payload until 2026-11-09; see the note in
+            # apply_l5_payload for the measured consequence.
+            "_born_step": int(getattr(a, "_born_step", 0)),
+            # Step index of the last assignment. Without it a restart makes
+            # every region look unvisited, which is what fold_auto uses to
+            # decide what she has stopped needing.
+            "_last_seen_step": int(getattr(a, "_last_seen_step", 0)),
         }
         for a in ls.state_space.attractors()
     ]
     return {
         "attractors": attrs,
+        # Collapsed regions. Without this the folded mass disappears on every
+        # restart: apply_l5_payload rebuilds the live table only, so the
+        # archive silently loses every summary fold() has produced.
+        "folded": [dict(f) for f in getattr(ls.state_space, "_folded", [])],
         "graph": stream.graph.to_dict(),
+        # M1. Her model of her own next state, and the error it currently
+        # makes. Part of the state, not of the session: without it every
+        # restart begins with a self-model that has never seen her move.
+        "self_model": stream.self_model.to_dict(),
+        "self_gain": {
+            "error": float(stream.self_gain.error),
+            "observations": int(stream.self_gain.observations),
+            "hits": int(stream.self_gain.hits),
+        },
+        "last_symbol": (None if stream._last_symbol is None
+                        else int(stream._last_symbol)),
         "identity": {
             "rounds": stream.identity.rounds,
             "appear": {f"{a},{b}": c
@@ -324,6 +349,21 @@ def apply_l5_payload(stream, payload: dict) -> None:
             _decay_factor=float(df),
         )
         a._assigned = int(d.get("_assigned", 0)) or len(d["members"])
+        # Age structure (2026-11-09). Without this line every region comes back
+        # with _born_step = 0, i.e. "born before the archive began", so age and
+        # per-region lifetime are both wrong after every restart. Measured on
+        # the real checkpoint (145504 steps, 307 regions): all 307 loaded with
+        # _born_step = 0, so _population_visit_rate() returned 3.44e-05
+        # (assigned / whole archive life) instead of the per-region rate. That
+        # value is the numerator of _birth_depth(), so every region born after
+        # the restart starts below the survival line (min_amp = 1e-3) and is
+        # deleted by the next recover() -- the exact failure the 2026-11-07
+        # audit fixed, reintroduced by restarting. Legacy checkpoints have no
+        # such field; 0 is kept for them (age unknowable, treated as old).
+        a._born_step = int(d.get("_born_step", 0))
+        # When she was last here. 0 = unknown (legacy record); fold_auto treats
+        # unknown as "cannot be shown to be overdue" rather than as "long ago".
+        a._last_seen_step = int(d.get("_last_seen_step", 0))
         # Members must keep their bounded buffer. An earlier version passed
         # list(...) into the constructor; because the field had been assigned
         # explicitly it silently became an unbounded list, so every load
@@ -335,6 +375,10 @@ def apply_l5_payload(stream, payload: dict) -> None:
         )
         attrs.append(a)
     ls.state_space._attractors = attrs
+    # Folded summaries. Absent from older checkpoints (nothing had been folded
+    # yet when the field was introduced), so a missing key means "none", not
+    # "damaged".
+    ls.state_space._folded = [dict(f) for f in (payload.get("folded") or [])]
     gs = payload.get("global_scale")
     if gs is not None:
         ls.state_space._global_scale = float(gs)  # legacy field, unused
@@ -356,6 +400,21 @@ def apply_l5_payload(stream, payload: dict) -> None:
     if g is not None:
         from src.L3_memory import TraceGraph
         stream.graph = TraceGraph.from_dict(g)
+
+    # M1: the self-model and the error it makes. Missing in older checkpoints;
+    # a fresh model is the honest starting point for those, since the counts
+    # it would need were never recorded.
+    sm = payload.get("self_model")
+    if sm is not None:
+        from src.L5_cognition.self_model import OnlineSelfModel
+        stream.self_model = OnlineSelfModel.from_dict(sm)
+    sg = payload.get("self_gain") or {}
+    if sg:
+        stream.self_gain.error = float(sg.get("error", stream.self_gain.error))
+        stream.self_gain.observations = int(sg.get("observations", 0))
+        stream.self_gain.hits = int(sg.get("hits", 0))
+    ls_symbol = payload.get("last_symbol")
+    stream._last_symbol = None if ls_symbol is None else int(ls_symbol)
 
     ident = payload.get("identity")
     if ident is not None:

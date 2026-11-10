@@ -90,6 +90,13 @@ def test_save_refuses_and_leaves_previous_file_intact() -> None:
             stream.identity = type("I", (), {"rounds": 0, "_appear": {}})()
             stream._st = None
             stream._step_count = 0
+            # M1: the payload now carries her self-model and its gain. The stub
+            # has to provide them, because the payload contract says they exist.
+            from src.L5_cognition.adaptive_gain import ErrorDrivenGain
+            from src.L5_cognition.self_model import OnlineSelfModel
+            stream.self_model = OnlineSelfModel()
+            stream.self_gain = ErrorDrivenGain()
+            stream._last_symbol = None
 
             persist.save_l5(stream, "l5.pkl")
             before = (pathlib.Path(d) / "l5.pkl").read_bytes()

@@ -28,6 +28,8 @@ from .landscape import Landscape
 from .terrain import StateSpace
 from .transitions import Transition, TransitionDetector
 from .workspace import GlobalWorkspace, Ignition
+from .adaptive_gain import ErrorDrivenGain
+from .self_model import OnlineSelfModel
 from src.L3_memory import Consolidator, Recall, RecallEngine, TraceGraph
 from src.L4_drive import Drive
 from src.L4_drive.regulation import Regulation
@@ -103,6 +105,19 @@ class Stream:
         self.identity = Identity()
         self._identity_every = 64
         self._last_core = None
+
+        # ---- M1: her model of her own next state, and the error it makes ----
+        # The model is first order over the regions she occupies; the gain it
+        # drives is bounded and only scales exploration. The prediction itself
+        # is never fed back into the dynamics -- if it were, her state would be
+        # following her expectation of it instead of the potential.
+        #
+        # Both live on the stream (not in the runtime loop) so that they are
+        # part of her state: the L5 payload carries them, and a restart resumes
+        # the same self-model instead of a blank one.
+        self.self_model = OnlineSelfModel()
+        self.self_gain = ErrorDrivenGain()
+        self._last_symbol: Optional[int] = None
 
         # Rest and swing were built while trying to find an internal source of
         # motion: without noise the state settled and stopped, and two attempts
@@ -229,6 +244,20 @@ class Stream:
                     node = i
                     break
             self.graph.touch(node, step=self._step_count)
+
+            # M1: score her prediction of this region against the region she
+            # actually reached, then learn the transition. The prediction was
+            # made from the previous symbol, before this one existed.
+            #
+            # A state the model has never seen produces no prediction, and no
+            # prediction produces no error: counting that as a miss would make
+            # the gain read "exploration" as "being wrong about myself".
+            prev, self._last_symbol = self._last_symbol, node
+            if prev is not None:
+                predicted = self.self_model.predict(prev)
+                if predicted is not None:
+                    self.self_gain.observe(predicted == node)
+                self.self_model.observe(prev, node)
 
         # L3: which attractors the current state co-activates.
         # Read-only: it does not modify the state space or the graph.

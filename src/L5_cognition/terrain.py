@@ -71,6 +71,18 @@ MIN_ASSIGN_FOR_INTERVAL = 4
 # never again decays at this fraction of the base rate rather than freezing.
 MIN_RATE_SCALE = 0.01
 
+# Fewest regions for a population statistic (median, quantile) to mean
+# anything. Below this there is no distribution, only a list of numbers, and a
+# quantile taken from it would be an artefact of the sample size. The same
+# bound _population_visit_rate() uses; observation resolution, not a mechanism.
+MIN_REGIONS_FOR_STATISTICS = 8
+
+# Quantile of her own revisit-interval distribution above which a wait counts as
+# longer than usual. It is a quantile of a measured distribution, not a
+# duration: the number of steps it corresponds to is whatever her own history
+# says it is.
+FOLD_INTERVAL_QUANTILE = 0.90
+
 
 @dataclass
 class Attractor:
@@ -105,6 +117,11 @@ class Attractor:
     # real system that produced a population median ratio of 4.8 with individual
     # regions above 25, purely as an artefact of when they were born.
     _born_step: int = 0
+    # Step index of the most recent assignment. `_assigned` says how often she
+    # has been here; this says when she was last here. Telling "rarely needed"
+    # from "not needed for a long time" needs both, and only the second one can
+    # answer "has she waited longer than usual" (see fold_auto).
+    _last_seen_step: int = 0
 
     # Compatibility: older checkpoints stored this attribute under the
     # name `_sigma_decay`. Keep the alias so existing state loads.
@@ -680,6 +697,9 @@ class StateSpace:
         if best is not None and best[0] < 1.0:
             a = self._attractors[best[1]]
             a.assign(x)
+            # When she was last here. Set here rather than in assign(), because
+            # the step index belongs to the space, not to the region.
+            a._last_seen_step = int(self._total_steps)
             headroom = max(self.ceiling - a.amp, 0.0)
             a.amp += headroom * self.assign_ratio
             return a
@@ -715,6 +735,7 @@ class StateSpace:
         a.members.append(x.copy())
         a._assigned = 1
         a._born_step = int(self._total_steps)
+        a._last_seen_step = a._born_step
         self._attractors.append(a)
         self._invalidate_scale()
 
@@ -820,6 +841,10 @@ class StateSpace:
         fa = a._decay_factor if a._decay_factor is not None else 1.0
         fb = b._decay_factor if b._decay_factor is not None else 1.0
         a._decay_factor = 0.5 * (fa + fb)
+        # The merged region has been visited whenever either part was. Keeping
+        # the later step is the only choice that does not invent a visit.
+        a._last_seen_step = max(int(getattr(a, "_last_seen_step", 0)),
+                                int(getattr(b, "_last_seen_step", 0)))
         a._sigma_cache = None
         del self._attractors[j]
         self._invalidate_scale()
@@ -842,7 +867,7 @@ class StateSpace:
 
         Returns None when there are too few regions to measure a median.
         """
-        if len(self._attractors) < 8:
+        if len(self._attractors) < MIN_REGIONS_FOR_STATISTICS:
             return None
         total = max(int(self._total_steps), 1)
         rates = []
@@ -955,6 +980,84 @@ class StateSpace:
     def fold(self, min_assigned: int = 2, age_factor: float = 8.0) -> int:
         """Fold and journal in one step. Returns how many regions were collapsed."""
         ids = self.fold_candidates(min_assigned=min_assigned, age_factor=age_factor)
+        if not ids:
+            return 0
+        removed = self.apply_fold(ids)
+        if self.journal is not None:
+            self.journal.append_fold(ids)
+        return removed
+
+    def fold_auto(self) -> int:
+        """Fold the regions her own visit statistics say she has stopped needing.
+
+        Replaces the two coefficients `fold()` takes as arguments
+        (min_assigned=2, age_factor=8.0), which were chosen, not measured
+        (HANDOFF §3.3). Both are now quantities of her own distribution:
+
+            interval_i = (total_steps - born_step_i) / assigned_i
+                mean number of steps between visits to region i.
+            wait       = quantile(interval, FOLD_INTERVAL_QUANTILE)
+                over the regions whose interval is actually estimated
+                (assigned >= MIN_ASSIGN_FOR_INTERVAL; below that the ratio is
+                a single gap, not an interval).
+            overdue_i  = (total_steps - last_seen_step_i) > wait
+
+        Only regions with an estimated interval contribute to `wait`, and every
+        region is tested against it. A rarely visited region therefore folds,
+        and a well visited one does not, without either threshold being a
+        number anyone chose.
+
+        Why not age since birth
+        -----------------------
+        The version specified in HANDOFF §3.3 compared age
+        (total_steps - born_step) against the same quantile. That comparison
+        cannot fire on the population it is meant to act on: for a region
+        assigned once, age and interval are the same number (its whole life),
+        so `age > interval` is false, and because those regions contribute
+        their whole life to the sample, the p90 is pinned at that same maximum.
+        Measured on a skewed synthetic population (10 of 40 regions assigned
+        once and born at 0, 30 assigned ~30 times and born at 99k of 100k
+        steps): the age criterion folds 0 regions, the elapsed-since-last-visit
+        criterion folds the 10. Age since birth is the wrong clock; elapsed
+        since the last visit is the clock the question is asked on.
+
+        Not a mortality mechanism
+        -------------------------
+        The region is collapsed into a summary in `_folded` (centroid, depth,
+        count) and the event is journaled, so replay rebuilds the same body.
+        Nothing here ranks regions by value.
+
+        Returns 0 when the distribution is not measurable. That is the intended
+        behaviour, not a fallback: acting on a distribution that does not exist
+        would be choosing the threshold by hand again.
+        """
+        if len(self._attractors) < MIN_REGIONS_FOR_STATISTICS:
+            return 0
+        now = int(self._total_steps)
+
+        intervals: list[float] = []
+        for a in self._attractors:
+            assigned = int(getattr(a, "_assigned", 0))
+            if assigned < MIN_ASSIGN_FOR_INTERVAL:
+                continue
+            life = max(now - int(getattr(a, "_born_step", 0)), 1)
+            intervals.append(life / float(assigned))
+        if len(intervals) < MIN_REGIONS_FOR_STATISTICS:
+            return 0
+
+        wait = float(np.quantile(np.asarray(intervals, dtype=float),
+                                 FOLD_INTERVAL_QUANTILE))
+
+        ids: list[int] = []
+        for i, a in enumerate(self._attractors):
+            last = int(getattr(a, "_last_seen_step", 0))
+            if last <= 0:
+                # No recorded visit: a checkpoint written before this was
+                # measured, or a region that never accepted a state. Whether
+                # she has waited too long is unknown, so it is not acted on.
+                continue
+            if (now - last) > wait:
+                ids.append(i)
         if not ids:
             return 0
         removed = self.apply_fold(ids)

@@ -63,8 +63,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-STATE_DIR = Path("data/state")
+# Paths are anchored to the repository root, not to the process working
+# directory. 2026-11-09: every path here used to be relative, so a run started
+# from another directory read (and created) a different data/state -- she
+# resumed from an empty archive while the real one sat untouched, and nothing
+# reported an error. The working directory is a property of how she was
+# launched; her time base must not be.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+STATE_DIR = _REPO_ROOT / "data" / "state"
 COMA_FILE = "coma.json"
+
+# Append-only logs, the only record that is never rolled back. Explicit
+# arguments in tests; the default is her own logs.
+DEFAULT_ACTIVITY_PATHS = (
+    str(_REPO_ROOT / "data" / "logs" / "events.jsonl"),
+    str(_REPO_ROOT / "data" / "logs" / "observations.jsonl"),
+)
 
 # 短于此视为崩溃快启：不记昏迷事件，但仍计入 coma_s（那段时间她确实不在）。
 # 取 3 倍持久化间隔（PERSIST_INTERVAL_S = 300），见评估文档 §5.1。
@@ -161,7 +176,7 @@ def save(state: ComaState, state_dir: Path | str = STATE_DIR) -> Path:
 
 def begin_session(
     state_dir: Path | str = STATE_DIR,
-    activity_paths: tuple[str, ...] = ("data/logs/events.jsonl", "data/logs/observations.jsonl"),
+    activity_paths: tuple[str, ...] = DEFAULT_ACTIVITY_PATHS,
 ) -> tuple[ComaState, float]:
     """Startup hook (called by P1 only).
 

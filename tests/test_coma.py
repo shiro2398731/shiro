@@ -42,7 +42,7 @@ def _write_coma(dirpath: str, **fields) -> None:
 
 def test_first_run_has_no_gap() -> None:
     with tempfile.TemporaryDirectory() as d:
-        state, gap = coma.begin_session(d)
+        state, gap = coma.begin_session(d, activity_paths=())
 
         assert gap == 0.0
         assert state.session_id == 1
@@ -59,7 +59,7 @@ def test_quick_restart_counts_seconds_but_no_event() -> None:
         past = datetime.now(timezone.utc) - timedelta(seconds=30)
         _write_coma(d, saved_at=past.isoformat(), session_id=0)
 
-        state, gap = coma.begin_session(d)
+        state, gap = coma.begin_session(d, activity_paths=())
 
         assert 29 < gap < 40, gap
         assert state.coma_events == 0, "30s 的快启不该记成昏迷事件"
@@ -71,7 +71,7 @@ def test_coma_after_one_hour() -> None:
         past = datetime.now(timezone.utc) - timedelta(seconds=3600)
         _write_coma(d, saved_at=past.isoformat(), session_id=7, coma_s=100.0, coma_events=2)
 
-        state, gap = coma.begin_session(d)
+        state, gap = coma.begin_session(d, activity_paths=())
 
         assert abs(gap - 3600) < 5, gap
         assert state.coma_events == 3
@@ -121,7 +121,7 @@ def test_session_id_increments_across_crashes() -> None:
     with tempfile.TemporaryDirectory() as d:
         ids = []
         for _ in range(3):
-            state, _gap = coma.begin_session(d)
+            state, _gap = coma.begin_session(d, activity_paths=())
             coma.mark_saved(d)
             ids.append(state.session_id)
 
@@ -134,7 +134,7 @@ def test_session_id_increments_across_crashes() -> None:
 
 def test_mark_saved_is_idempotent() -> None:
     with tempfile.TemporaryDirectory() as d:
-        coma.begin_session(d)
+        coma.begin_session(d, activity_paths=())
         before = coma.load(d)
 
         for _ in range(5):
@@ -149,7 +149,7 @@ def test_mark_saved_is_idempotent() -> None:
 
 def test_total_uptime_includes_current_session() -> None:
     with tempfile.TemporaryDirectory() as d:
-        state, _ = coma.begin_session(d)
+        state, _ = coma.begin_session(d, activity_paths=())
         state.uptime_s = 3600.0
         state.last_boot_at = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
         coma.save(state, d)
@@ -164,7 +164,7 @@ def test_corrupt_ledger_does_not_block_startup() -> None:
         p = Path(d) / coma.COMA_FILE
         p.write_text("{ this is not json", encoding="utf-8")
 
-        state, gap = coma.begin_session(d)
+        state, gap = coma.begin_session(d, activity_paths=())
 
         assert gap == 0.0
         assert state.session_id == 1
