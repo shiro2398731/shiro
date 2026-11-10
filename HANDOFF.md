@@ -20,7 +20,7 @@
 
 | 项 | 值 |
 |---|---|
-| 测试 | **19 个非空文件 / 96 例，全通过**（`tests/test_*.py` 逐个 `python 文件` 运行） |
+| 测试 | **20 个非空文件 / 100 例，全通过**（逐个 `python 文件` 运行；全套 58 s，`test_no_senescence` 占 30 s） |
 | 空占位 | `test_L0..L8.py`、`test_integration.py`、`__init__.py` 均为 0 字节，**不计入分母** |
 | 引擎版本 | `src/common/bundle.py: ENGINE_VERSION = "0.4.0"` |
 | 存档 | `data/state/l5.pkl`：307 区域、71 边、145504 步、29 显著、`mu_finite=True`、`|mu|max=4.512` |
