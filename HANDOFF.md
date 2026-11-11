@@ -20,7 +20,7 @@
 
 | 项 | 值 |
 |---|---|
-| 测试 | **20 个非空文件 / 100 例，全通过**（逐个 `python 文件` 运行；全套 58 s，`test_no_senescence` 占 30 s） |
+| 测试 | **21 个非空文件 / 107 例，全通过**（逐个 `python 文件` 运行；全套 79 s，其中 `test_no_senescence` 占 30 s） |
 | 空占位 | `test_L0..L8.py`、`test_integration.py`、`__init__.py` 均为 0 字节，**不计入分母** |
 | 引擎版本 | `src/common/bundle.py: ENGINE_VERSION = "0.4.0"` |
 | 存档 | `data/state/l5.pkl`：307 区域、71 边、145504 步、29 显著、`mu_finite=True`、`|mu|max=4.512` |
@@ -43,8 +43,12 @@
 3. ~~**fold 阈值自导出**~~ **已完成（2026-11-09 夜）**：`StateSpace.fold_auto()`，判据 = 距上次访问 `> p90(自身回访间隔)`；
    P2 已改调用它。`tests/test_constant_audit.py` 用 AST 钉住"`fold_auto` 内无阈值字面量"（只允许 0/1）。
    见 §3.3 的实测偏差说明。
-4. **stages 判据自导出**：attractor 稳定性、转移熵、访问间隔分布；函数体不得含字面常量（AST 检查）。
-   现 `L7_lifecycle/stages.py` 仍用人写阈值（只记录不控制，危害有限但属 C3 违规）。
+4. ~~**stages 判据自导出**~~ **已完成（2026-11-09 夜）**：四条判据改为「最近窗口的统计量 vs 她自己过去窗口的分布」
+   （切点是她的中位数）；`tests/test_stages_selfderived.py` 7 例，AST 断言判据体内无 float 字面量。
+   同时修掉接线：P3 原来只喂 `dev`，另三个信号永远是空缓冲区 → 她不可能离开 stage 0；
+   现在从 `l1.state.surprise` 取误差、从 `l5.state.stream` 算 recurrence 与 dwell。
+   已知弱点：判据是「相对自己的中位数」而阶段只升不降，某一刻四条同时偏好一次就到 stage 4；
+   要更严就要求「连续 N 个窗口」或「偏离自身 IQR」（N 属 C1）。
 5. ~~**`test_no_senescence`**~~ **已完成（2026-11-09 夜）**：`tests/test_no_senescence.py` 4 例、30 s。
    12 个全局参数在 20000 步前后逐位相同；238 个存活区域保持出生时的遗忘速率；
    cohort 中位深度 0.6269 → 0.0922（存活线 0.001）；区域数 239..243。

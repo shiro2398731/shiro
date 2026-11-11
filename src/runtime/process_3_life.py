@@ -19,6 +19,7 @@ L3 / L8 are not implemented.
 
 from __future__ import annotations
 
+import collections
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", "..")))
 
@@ -28,12 +29,21 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+
 from src.common.bus import Bus
 from src.common.homeostasis import Homeostasis
 from src.common.observe import Observer
-from src.common.types import EnvelopeEvent, StateVector, safe_from_json
+from src.common.types import EnvelopeEvent, StateVector, StreamState, SurpriseSignal, safe_from_json
 from src.L7_lifecycle.rhythm import PhaseWitness
 from src.L7_lifecycle.stages import StageMonitor
+
+# How many region ids the recurrence/dwell statistics look at. A window size is
+# an engineering quantity (C1). 64 is short enough to react within a snapshot
+# interval (3 min) and long enough that a run of identical ids means something.
+ID_WINDOW = 64
+# Fewest ids before recurrence and dwell are worth computing at all.
+MIN_IDS = 16
 
 
 def main() -> int:
@@ -68,6 +78,49 @@ def main() -> int:
         )
         stages.observe(dev=obj.dev)
 
+    # ---- what the stage criteria need, and only what exists on the bus ----
+    #
+    # P3 used to feed StageMonitor `dev` alone, so three of the four criteria
+    # had empty buffers and she could never leave stage 0. The two signals
+    # below come from what she already broadcasts: prediction error from P1,
+    # and the attractor id sequence from P2 (recurrence + dwell computed here,
+    # so no layer has to know what the stages mean).
+
+    def on_surprise(topic: str, obj: SurpriseSignal) -> None:
+        stages.observe(s_avg=obj.s_t)
+
+    ids: collections.deque = collections.deque(maxlen=ID_WINDOW)
+
+    def on_stream(topic: str, obj: StreamState) -> None:
+        try:
+            aid = int(obj.attractor_id)
+        except (TypeError, ValueError):
+            return
+        if aid < 0:
+            return
+        ids.append(aid)
+        if len(ids) < MIN_IDS:
+            return
+        seq = list(ids)
+        seen: set[int] = set()
+        repeats = 0
+        for x in seq:
+            if x in seen:
+                repeats += 1
+            else:
+                seen.add(x)
+        runs = []
+        run = 1
+        for a, b in zip(seq, seq[1:]):
+            if a == b:
+                run += 1
+            else:
+                runs.append(run)
+                run = 1
+        runs.append(run)
+        stages.observe(recurrence=repeats / float(len(seq)),
+                       dwell=float(np.median(runs)))
+
     bus.subscribe(
         "l0.event.envelope", on_envelope,
         parser=lambda s: safe_from_json(EnvelopeEvent, s),
@@ -76,6 +129,16 @@ def main() -> int:
     bus.subscribe(
         "l2.state.field", on_field,
         parser=lambda s: safe_from_json(StateVector, s),
+        owner_module="src.L7_lifecycle.stages",
+    )
+    bus.subscribe(
+        "l1.state.surprise", on_surprise,
+        parser=lambda s: safe_from_json(SurpriseSignal, s),
+        owner_module="src.L7_lifecycle.stages",
+    )
+    bus.subscribe(
+        "l5.state.stream", on_stream,
+        parser=lambda s: safe_from_json(StreamState, s),
         owner_module="src.L7_lifecycle.stages",
     )
 
@@ -148,6 +211,7 @@ def main() -> int:
             observer.snapshot("lifecycle", {
                 "stage": stages.stage_def().name,
                 "stage_index": idx,
+                "stage_criteria": dict(stages.last_reasons),
                 "closure_ok": rep.closed,
                 "corr": round(rep.correlation, 3) if rep.correlation else None,
                 "envelope_events": witness.count,
