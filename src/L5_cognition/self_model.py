@@ -16,8 +16,14 @@ M1：自我模型（可测投影；不宣称主观体验）。
 
 from __future__ import annotations
 
+import math
 import random
 from collections import defaultdict
+
+# Laplace smoothing for the prequential loss. C1: it keeps an unseen transition
+# from costing an infinite number of bits. It does not change the argmax used
+# for prediction, so accuracy and loss stay comparable.
+SMOOTHING = 0.5
 
 
 class SelfModel:
@@ -79,6 +85,12 @@ class OnlineSelfModel:
         self._seen: dict[int, float] = {}
         self.observations = 0
         self.hits = 0
+        # Prequential log-loss, in bits per observation. This is the number
+        # accuracy hides: on her archive "predict the region she is already in"
+        # scores 0.9446 accuracy against this model's 0.9381, but 3.6854 bits
+        # against 0.4813. Accuracy is dominated by dwell; bits are not.
+        self.nll_bits = 0.0
+        self.scored = 0
 
     def predict(self, state: int) -> int | None:
         row = self._counts.get(int(state))
@@ -91,9 +103,29 @@ class OnlineSelfModel:
 
     def observe(self, prev: int, nxt: int) -> None:
         p, n = int(prev), int(nxt)
+        # Score the outcome BEFORE learning it. In that order the loss means
+        # "how surprised was she", not "how well did she memorise".
+        vocab = max(len(self._seen), 1)
+        row_before = self._counts.get(p) or {}
+        row_total = sum(row_before.values())
+        prob = (row_before.get(n, 0.0) + SMOOTHING) / (row_total + SMOOTHING * vocab)
+        self.nll_bits += -math.log2(prob if prob > 0 else 1e-12)
+        self.scored += 1
+        # Accuracy is tracked here as well, so the model is self-contained:
+        # until 2026-11-10 `hits` was only ever set by a restore, which made
+        # `accuracy` read 0.0 on a model that had been predicting correctly.
+        self.observations += 1
+        if self.predict(p) == n:
+            self.hits += 1
+
         row = self._counts.setdefault(p, {})
         row[n] = row.get(n, 0.0) + 1.0
+        # Both ends count as "a symbol she has seen": the smoothing vocabulary
+        # has to include the symbol she moved into, otherwise a transition out
+        # of a never-visited region costs zero bits -- an infinitely generous
+        # score for the least-known case.
         self._seen[p] = self._seen.get(p, 0.0) + 1.0
+        self._seen[n] = self._seen.get(n, 0.0) + 1.0
 
     @property
     def states_seen(self) -> int:
@@ -102,6 +134,11 @@ class OnlineSelfModel:
     @property
     def accuracy(self) -> float:
         return self.hits / self.observations if self.observations else 0.0
+
+    @property
+    def bits_per_observation(self) -> float:
+        """Prequential surprise per transition: lower is better, unbounded above."""
+        return self.nll_bits / self.scored if self.scored else 0.0
 
     def chance(self) -> float:
         return 1.0 / max(self.states_seen, 1)
@@ -117,6 +154,8 @@ class OnlineSelfModel:
             "seen": {str(k): float(v) for k, v in self._seen.items()},
             "observations": int(self.observations),
             "hits": int(self.hits),
+            "nll_bits": float(self.nll_bits),
+            "scored": int(self.scored),
         }
 
     @classmethod
@@ -128,6 +167,8 @@ class OnlineSelfModel:
             m._seen[int(k)] = float(v)
         m.observations = int(data.get("observations", 0))
         m.hits = int(data.get("hits", 0))
+        m.nll_bits = float(data.get("nll_bits", 0.0))
+        m.scored = int(data.get("scored", 0))
         return m
 
 

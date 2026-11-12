@@ -297,6 +297,9 @@ def main() -> int:
                     "transitions": transitions,
                     # M1：她自己预测的命中率与当前增益（可 ablation 对照）
                     "self_accuracy": round(stream.self_gain.accuracy, 4),
+                    # 命中率会被"待在原地"抬高：实测 0.9390 的 0 阶基线打不过
+                    # 模型的 0.9325。真正能区分的是留出/前向对数损失，见 tools/m1_audit.py。
+                    "self_bits": round(stream.self_model.bits_per_observation, 4),
                     "self_gain": round(stream.self_gain.gain(), 4),
                     # L3
                     "edges": ss["n_edges"],

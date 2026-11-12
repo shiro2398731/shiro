@@ -10,6 +10,7 @@ Run: .\.venv\Scripts\python.exe tests\test_self_model.py
 
 from __future__ import annotations
 
+import math
 import pathlib
 import random
 import sys
@@ -149,6 +150,78 @@ def test_self_model_survives_a_restart() -> None:
     assert abs(b.self_gain.error - a.self_gain.error) < 1e-12
     print(f"       resumed: states={b.self_model.states_seen} "
           f"last={b._last_symbol} observations={b.self_gain.observations}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# M1 audit: accuracy is dominated by dwell, bits are not
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_bits_per_observation_matches_a_hand_calculation() -> None:
+    """Prequential loss, scored before the table learns the transition.
+
+    (0,1) first: no history, so p = 1.0 (0 bits).
+    (1,0): symbol 1 unseen as a predecessor, vocabulary 2 -> p = 0.5 (1 bit).
+    (0,1) and (1,0) again: each row has one of two outcomes -> p = 0.75.
+    """
+    m = OnlineSelfModel()
+    for a, b in [(0, 1), (1, 0), (0, 1), (1, 0)]:
+        m.observe(a, b)
+    expected = (1.0 - 2.0 * math.log2(0.75)) / 4.0
+    assert abs(m.bits_per_observation - expected) < 1e-9, (
+        m.bits_per_observation, expected)
+    assert m.scored == 4, m.scored
+    assert m.states_seen == 2, m.states_seen
+    print(f"       hand-checked: {m.bits_per_observation:.6f} bits/observation")
+
+
+def test_model_tracks_its_own_accuracy() -> None:
+    """Before 2026-11-10 `hits` was only ever set by a restore, so accuracy
+    read 0.0 on a model that had been predicting correctly."""
+    m = OnlineSelfModel()
+    for _ in range(3):
+        for a, b in [(0, 1), (1, 2), (2, 0)]:
+            m.observe(a, b)
+    assert m.observations == 9, m.observations
+    assert m.accuracy > 0.5, m.accuracy
+    print(f"       self-tracked accuracy={m.accuracy:.3f} over {m.observations}")
+
+
+def _dwell_cycle(n: int = 1200, states: int = 4, dwell: int = 3) -> list[int]:
+    return [(i // dwell) % states for i in range(n)]
+
+
+def test_standing_still_wins_on_accuracy_and_loses_on_bits() -> None:
+    """Her own numbers, reproduced on a synthetic dwell-heavy sequence.
+
+    Measured on the real archive: "predict the current region" scores 0.9390
+    accuracy against the model's 0.9325, but 3.1321 bits against 0.4929. A
+    metric where the trivial predictor wins cannot be the criterion.
+    """
+    import os
+    os.chdir(pathlib.Path(__file__).resolve().parent.parent)
+    from tools.m1_audit import evaluate
+
+    d = evaluate(_dwell_cycle())
+    assert d["accuracy"]["same"] >= d["accuracy"]["model"], d["accuracy"]
+    assert d["bits_per_transition"]["model"] < 0.5 * d["bits_per_transition"]["same"], d
+    print(f"       acc: model={d['accuracy']['model']:.3f} same={d['accuracy']['same']:.3f}"
+          f"  |  bits: model={d['bits_per_transition']['model']:.4f} "
+          f"same={d['bits_per_transition']['same']:.4f}")
+
+
+def test_shuffling_removes_the_advantage() -> None:
+    """If the advantage survives shuffling, it was never about transition structure."""
+    import os
+    os.chdir(pathlib.Path(__file__).resolve().parent.parent)
+    from tools.m1_audit import evaluate
+
+    seq = _dwell_cycle()
+    real = evaluate(seq)
+    shuf = evaluate(seq, shuffle_seed=0)
+    assert real["bits_per_transition"]["model"] < 0.5 * shuf["bits_per_transition"]["model"], (
+        real, shuf)
+    print(f"       model bits: real={real['bits_per_transition']['model']:.4f}  "
+          f"shuffled={shuf['bits_per_transition']['model']:.4f}")
 
 
 def main() -> int:
