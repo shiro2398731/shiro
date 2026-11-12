@@ -13,7 +13,12 @@ Measured on her real archive (`python tools/grounding.py`, 4000 steps):
 
 So the tests below are about the estimator (a table that can carry information at
 all, and that a null really kills), not evidence that her symbols refer to her
-internal scalars. The held-out evaluation in tools/grounding.py is the criterion.
+internal scalars. The held-out evaluation is the criterion.
+
+A composite symbol (previous, current) was also tried: on the transition target
+it scores +2.5118 of 3.3325 (75.4%), i.e. *worse* than the single symbol. That is
+what a first-order process must do, and `test_composite_symbol_adds_nothing_when_
+the_target_is_first_order` pins it so the claim stays checkable.
 
 Also pinned: no text path. `grounding.py` may import nothing that carries
 language, and `observe()` may take numbers only (INV-8: quantities in,
@@ -33,7 +38,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.L5_cognition.grounding import (  # noqa: E402
-    BUCKETS, MIN_HIST, GroundingTable,
+    BUCKETS, MIN_HIST, GroundingTable, heldout_gain,
 )
 
 GROUNDING_PY = ROOT / "src" / "L5_cognition" / "grounding.py"
@@ -206,6 +211,49 @@ def test_grounding_takes_numbers_and_imports_nothing_that_carries_language() -> 
                 if isinstance(ann, ast.Name) and ann.id == "str":
                     raise AssertionError(f"observe() takes a string: {arg.arg}")
     print(f"       imports: {sorted(set(imports))}; observe() takes no string")
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 5. the criterion itself (held-out, not plug-in)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_heldout_gain_is_not_positive_when_the_symbol_says_nothing() -> None:
+    rnd = random.Random(2)
+    pairs = [(rnd.randrange(6), rnd.randrange(5)) for _ in range(3000)]
+    r = heldout_gain(pairs)
+    assert r["gain_bits"] <= 0.02, r
+    print(f"       independent: gain={r['gain_bits']:+.4f} bits (must not be positive)")
+
+
+def test_heldout_gain_detects_a_real_dependence() -> None:
+    pairs = [(i % 6, i % 6) for i in range(3000)]
+    r = heldout_gain(pairs)
+    assert r["gain_bits"] > 1.0, r
+    print(f"       deterministic: gain={r['gain_bits']:+.4f} bits")
+
+
+def test_composite_symbol_adds_nothing_when_the_target_is_first_order() -> None:
+    """A first-order chain: (previous, current) cannot say more about the next
+    element than `current` already does.
+
+    Pinned because the real archive showed exactly this (transition target
+    78.3% with A, 75.4% with the composite), and a claim should be recoverable
+    on data where the answer is known.
+    """
+    rnd = random.Random(4)
+    nxt = {0: 1, 1: 2, 2: 0}
+    seq = [0]
+    for _ in range(3000):
+        s = seq[-1]
+        seq.append(rnd.randrange(3) if rnd.random() < 0.1 else nxt[s])
+    single = heldout_gain([(seq[i], seq[i + 1]) for i in range(len(seq) - 1)])
+    comp = heldout_gain([((seq[i - 1], seq[i]), seq[i + 1])
+                         for i in range(1, len(seq) - 1)])
+    assert single["gain_bits"] > 1.0, single
+    assert comp["gain_bits"] <= single["gain_bits"] + 0.1, (single, comp)
+    print(f"       first-order chain: single={single['gain_bits']:+.4f}  "
+          f"composite={comp['gain_bits']:+.4f}")
 
 
 def main() -> int:

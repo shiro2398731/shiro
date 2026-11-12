@@ -22,7 +22,9 @@ L6 现在拿到的符号只有 `attractor_id` —— 一个编号。编号本身
 实测（她的真实存档，4000 步；`python tools/grounding.py`）：
     plug-in MI(符号; 状态桶) = 0.6096 bits，打乱后 0.0324 bits（18.8x）
     **但留出法增益 = -0.0517 bits** —— 表记住了样本，符号对瞬时状态量没有指代。
-    留出法另测 p(下一个区域 | 当前区域)：3.3325 → 0.7226 bits，增益 +2.6099（78.3%）。
+    留出法另测 p(下一个区域 | 当前区域)：3.3325 → 0.7226 bits，增益 +2.6099（78.3%）；
+    换成复合符号 (上一个, 当前) 后为 +2.5118（75.4%）——**组合没有增加带宽**，
+    因为对"下一步"来说 (前,现) 在给定"现"之后没有额外信息（一阶链的性质）。
 
 所以本模块目前能支持的说法只有一句：**符号不贴着某个内在标量，但带着关于她下一步的信息**。
 plug-in MI 在样本稀疏时严重上偏，判据必须是留出法（`tools/grounding.py` 的第二、三项）；
@@ -59,6 +61,75 @@ HIST = 512
 
 # Fewest samples before her own quantiles mean anything. C1.
 MIN_HIST = 64
+
+# Laplace smoothing for the held-out criterion. C1: it keeps an unseen cell
+# from producing an infinite loss; it does not change what is being measured.
+ALPHA = 0.5
+
+
+def heldout_gain(pairs: list, alpha: float = ALPHA) -> dict:
+    """Held-out log-loss of p(target | symbol) vs p(target): the real criterion.
+
+    `pairs` is [(symbol, target), ...] in time order; the first half fits, the
+    second half scores. Gain is bits per observation; positive means knowing
+    the symbol helps predict the target on data the table never saw. `symbol`
+    may be any hashable value (an id, or a tuple for a composite symbol).
+
+    Why this and not mutual_information()
+    -------------------------------------
+    Plug-in MI rises with the number of cells even when the variables are
+    independent, and it rises fast once cells outnumber samples. Measured on
+    her archive: I(region; speed/tension buckets) = 0.6096 bits against a
+    shuffled null of 0.0324 (18.8x), which reads like a result. The same data
+    scored held-out gives -0.0517 bits, i.e. worse than the marginal: the table
+    memorised the sample. A statistic that cannot tell those two apart is not a
+    criterion, so this function is what the reports quote.
+    """
+    split = len(pairs) // 2
+    train, test = pairs[:split], pairs[split:]
+    if not train or not test:
+        return {"n_test": 0}
+
+    targets = sorted({y for _, y in train})
+    base = {}
+    for _, y in train:
+        base[y] = base.get(y, 0) + 1
+    n_train = sum(base.values())
+    p_base = {y: (base[y] + alpha) / (n_train + alpha * len(targets))
+              for y in targets}
+
+    row = {}
+    tot = {}
+    for s, y in train:
+        if s is None:
+            continue
+        r = row.setdefault(s, {})
+        r[y] = r.get(y, 0) + 1
+        tot[s] = tot.get(s, 0) + 1
+
+    ll_base = 0.0
+    ll_model = 0.0
+    n = 0
+    for s, y in test:
+        if y not in p_base:
+            continue
+        p = p_base[y]
+        if s is not None and tot.get(s):
+            p = (row[s].get(y, 0) + alpha) / (tot[s] + alpha * len(targets))
+        ll_base += -math.log2(p_base[y])
+        ll_model += -math.log2(p)
+        n += 1
+    if n == 0:
+        return {"n_test": 0}
+    return {
+        "n_test": n,
+        "symbols_used": len(tot),
+        "distinct_targets": len(targets),
+        "baseline_bits": round(ll_base / n, 4),
+        "model_bits": round(ll_model / n, 4),
+        "gain_bits": round((ll_base - ll_model) / n, 4),
+        "gain_share": round((ll_base - ll_model) / ll_base, 4) if ll_base else None,
+    }
 
 
 class GroundingTable:
