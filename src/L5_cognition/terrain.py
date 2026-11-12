@@ -1138,7 +1138,7 @@ class StateSpace:
         for a in self._attractors:
             if a._decay_factor is None:
                 a._decay_factor = max(
-                    float(1.0 + self._rng.normal(0.0, self.decay_spread)), 0.05
+                    float(1.0 + rng.normal(0.0, self.decay_spread)), 0.05
                 )
 
             # Slow the region down if it is revisited far less often than the
@@ -1178,24 +1178,56 @@ class StateSpace:
         cutoff = deepest * threshold_ratio
         return [a for a in self._attractors if a.amp >= cutoff]
 
+    def salient_indices(self, threshold_ratio: float = 0.5) -> List[int]:
+        """`salient()` as indices into the attractor table, same rule.
+
+        Exists so that callers can do a nearest lookup without ever leaving the
+        one numbering convention (see the note above `nearest_attractor`).
+        """
+        if not self._attractors:
+            return []
+        deepest = max(a.amp for a in self._attractors)
+        cutoff = deepest * threshold_ratio
+        return [i for i, a in enumerate(self._attractors) if a.amp >= cutoff]
+
     def depth_profile(self) -> np.ndarray:
         return np.array([a.amp for a in self._attractors], dtype=float)
 
     def nearest_attractor(self, x: np.ndarray) -> Optional[tuple[int, float]]:
-        """Nearest salient attractor, by normalized distance (vectorised)."""
-        sals = self.salient()
-        if not sals:
+        """Nearest salient attractor: **(index into the attractor table, distance)**.
+
+        One convention, deliberately
+        ----------------------------
+        This codebase had three numberings for "a region":
+
+            the `_attractors` table        <- graph nodes, M1's symbol, this function
+            the `salient()` subset         <- what this function used to return
+            whatever the caller invents    <- ...
+
+        They are not interchangeable, and mixing them produced real wrong
+        answers three times in one night (grounding scored MI = 1.0240 against a
+        probe's 0.7395 on the same data; recounter nearly read the wrong region;
+        and the "attractor_id" broadcast to L6 was a salient index while the
+        graph was keyed on table indices). Every exposed index is now a table
+        index; `salient_indices()` gives the subset in that same space.
+
+        Identity is still positional: entries shift when a merge or a deletion
+        removes one. That is the next thing to fix (a stable id per region);
+        this change removes the cross-convention errors, not that one.
+        """
+        idx = self.salient_indices()
+        if not idx:
             return None
         x = np.asarray(x, dtype=float)
-        mus = np.stack([a.mu for a in sals])
+        mus = np.stack([self._attractors[i].mu for i in idx])
         sig = np.maximum(
-            np.array([a.sigma for a in sals], dtype=float),
+            np.array([self._attractors[i].sigma for i in idx], dtype=float),
             np.finfo(float).eps,
         )
         d = mus - x
         z = np.sqrt(np.einsum("ij,ij->i", d, d)) / sig
-        i = int(np.argmin(z))
-        return i, float(z[i])
+        j = int(np.argmin(z))
+        return int(idx[j]), float(z[j])
 
     # Compatibility alias.
     def nearest_basin(self, x: np.ndarray) -> Optional[tuple[int, float]]:

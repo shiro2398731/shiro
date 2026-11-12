@@ -75,6 +75,13 @@ class TransitionDetector:
         self.history: list[Transition] = []
 
     def nearest_salient(self, x: np.ndarray) -> Optional[int]:
+        """Index of the nearest salient region -- **index into the attractor table**.
+
+        Same convention as `StateSpace._nearest_normalized` and `graph.touch`.
+        Before 2026-11-12 this returned an index into the salient *subset*,
+        which is a different number for the same region as soon as one more
+        region becomes salient.
+        """
         n = self.state_space.nearest_attractor(x)
         return None if n is None else n[0]
 

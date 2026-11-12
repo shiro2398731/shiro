@@ -39,13 +39,23 @@ def _loaded(warm: int = 60):
 
 
 def _fingerprint(st) -> tuple:
-    """Everything the projection must not change."""
+    """Everything the projection must not change.
+
+    Centroids and depths are in here because leaving them out hid a real bug:
+    `build_l5_payload` stores `a.mu` by reference and `apply_l5_payload` used to
+    bind that same array into the loaded region, so a "read-only" projection was
+    writing into the source through a shared array. Position and velocity looked
+    untouched while the regions moved under her.
+    """
+    attrs = st.landscape.state_space.attractors()
     return (
         int(st._step_count),
         int(st.landscape.state_space._total_steps),
-        len(st.landscape.state_space.attractors()),
+        len(attrs),
         st._st.x.tobytes(),
         st._st.v.tobytes(),
+        tuple(a.mu.tobytes() for a in attrs),
+        tuple(round(float(a.amp), 12) for a in attrs),
     )
 
 

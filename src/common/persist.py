@@ -42,6 +42,8 @@ import collections
 import json
 import os
 import pickle
+
+import numpy as np
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -338,17 +340,28 @@ def apply_l5_payload(stream, payload: dict) -> None:
         raw = payload.get("traces", [])
 
     attrs = []
-    for d in raw:
+    for i, d in enumerate(raw):
         # Backward compatibility: records written by earlier versions may
         # lack fields. A missing decay factor is drawn from the same
-        # distribution used at construction.
+        # distribution used at construction — but **deterministically**, from
+        # (total_steps, index). Drawing it from `ls.state_space._rng` (unseeded)
+        # meant two loads of the same archive produced two bodies that drift
+        # apart: measured 2026-11-12, two projections of the same checkpoint
+        # diverged at step 7 because their decay factors differed.
         df = d.get("_decay_factor", d.get("_sigma_decay"))
         if df is None:
-            df = float(1.0 + ls.state_space._rng.normal(
-                0.0, ls.state_space.decay_spread))
+            _rng = np.random.default_rng(int(payload.get("total_steps", 0) or 0) + i)
+            df = float(1.0 + _rng.normal(0.0, ls.state_space.decay_spread))
             df = max(df, 0.05)
         a = Attractor(
-            mu=d["mu"], amp=d["amp"],
+            # **Copy, do not alias.** `build_l5_payload` stores `a.mu` itself,
+            # not a copy, so `mu=d["mu"]` would make the loaded region share one
+            # array with the archive it was loaded from -- and with every other
+            # region loaded from the same payload. `Attractor.assign()` updates
+            # the centroid in place (`self.mu += ...`), so a "read-only" sandbox
+            # copy was writing into her: measured 2026-11-12, two projections of
+            # the same checkpoint diverged at step 7 because they shared centroids.
+            mu=np.array(d["mu"], dtype=float, copy=True), amp=d["amp"],
             scale=d.get("scale"), born_t=d.get("born_t"),
             _decay_factor=float(df),
         )
@@ -375,7 +388,8 @@ def apply_l5_payload(stream, payload: dict) -> None:
         # 68743 historical states for a single attractor, which inflated its
         # measured sigma with old outliers and never decayed.
         a.members = collections.deque(
-            list(d["members"])[-MEMBER_BUFFER:], maxlen=MEMBER_BUFFER
+            (np.array(m, dtype=float, copy=True) for m in list(d["members"])[-MEMBER_BUFFER:]),
+            maxlen=MEMBER_BUFFER,
         )
         attrs.append(a)
     ls.state_space._attractors = attrs
