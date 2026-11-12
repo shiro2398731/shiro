@@ -46,6 +46,9 @@
    0 阶规则「下一个区域 = 当前区域」准确率 **0.9390** > 模型 **0.9325**，但对数损失 **3.1321** vs **0.4929** bits。
    打乱序列后模型 3.3730 bits / 边际 3.2758（优势消失）。判据因此改为**前向对数损失**
    （`OnlineSelfModel.bits_per_observation`，随存档落盘，P2 快照记 `self_bits`）。
+   **`self_model` 不进 journal（已决策，2026-11-10）**：实测回滚窗口（≤1 个 persist 间隔 ≈ 60 个转移）
+   只让 bits 从 0.492859 变到 0.498129（+0.0053），而同一次运行的两个长度窗之间差 0.0259（5 倍）。
+   改 WAL 格式（新记录类型 + 版本 + replay 要喂 Stream）不值得；若 M1 的损失以后成为决策依据再回来看。
 2. ~~**TemplateAdapter 静音化**~~ **已完成**（`tests/test_template_silence.py` 3 例）。
 3. ~~**fold 阈值自导出**~~ **已完成（2026-11-09 夜）**：`StateSpace.fold_auto()`，判据 = 距上次访问 `> p90(自身回访间隔)`；
    P2 已改调用它。`tests/test_constant_audit.py` 用 AST 钉住"`fold_auto` 内无阈值字面量"（只允许 0/1）。

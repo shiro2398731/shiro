@@ -49,7 +49,18 @@ _DIM_MARK = b"#L5J2"                       # file header, so a foreign file is r
 
 
 class Journal:
-    """Append observations and recovery calls; replay them into a StateSpace."""
+    """Append observations and recovery calls; replay them into a StateSpace.
+
+    Not journaled, on purpose: the self-model (M1) and the grounding table. Both
+    live in the L5 payload, so a rollback loses at most one persist interval of
+    them. Measured (2026-11-10, 1999 transitions): dropping the last 60
+    transitions moves M1's prequential loss from 0.492859 to 0.498129 bits
+    (+0.0053), while the difference between two length windows of the same run
+    is 0.0259 bits -- five times larger. Journaling them would mean a new record
+    type, a WAL version bump and a replay path that feeds a Stream instead of a
+    StateSpace, to recover 1% of a metric whose natural variation is 5%.
+    Revisit only if that loss becomes decision-critical.
+    """
 
     def __init__(self, path: Path | str = "data/journal/l5.wal", dim: int = _DIM) -> None:
         self.path = Path(path)
