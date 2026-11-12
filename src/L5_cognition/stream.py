@@ -18,6 +18,8 @@ exposed, not by convention.
 
 from __future__ import annotations
 
+import collections
+
 import numpy as np
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -28,6 +30,10 @@ from .landscape import Landscape
 from .terrain import StateSpace
 from .transitions import Transition, TransitionDetector
 from .workspace import GlobalWorkspace, Ignition
+from .action import HOLD, LEAVE, NAMES as ACTION_NAMES, ActionGate
+
+# 过去多少次停留参与中位数比较。C1：缓冲区长度，不是判据。
+DWELL_MEMORY = 64
 from .adaptive_gain import ErrorDrivenGain
 from .grounding import GroundingTable
 from .self_model import OnlineSelfModel
@@ -131,6 +137,19 @@ class Stream:
         # tension) that L6 is not allowed to receive. L6 gets only the label.
         self.grounding = GroundingTable()
 
+        # ---- 行动：她能做的一件事（留在原处 / 离开）----
+        # 选择权在她自己手里（判据只用她自己的张力中位数，见 action.py）；
+        # 我们只写下"身体能做什么"，以及为干预实验留一个强制口。
+        self.actions = ActionGate()
+        self._action: int = HOLD
+        self.action_counts: dict[int, int] = {HOLD: 0, LEAVE: 0}
+        # 她在这个区域待了多少步，以及过去每次待了多久。判据只用这两个量。
+        self._dwell: int = 0
+        self._dwell_history: collections.deque = collections.deque(maxlen=DWELL_MEMORY)
+        self._dwell_region: Optional[int] = None
+        # 只给 tools/intervene.py 用：强制某一边，用来做 do(a) 对照。
+        self.force_action = None
+
         # Rest and swing were built while trying to find an internal source of
         # motion: without noise the state settled and stopped, and two attempts
         # to keep it moving were a per-region slow variable and a global slow
@@ -200,6 +219,10 @@ class Stream:
         """
         if self._st is None:
             raise RuntimeError("Stream not calibrated: no zero point, no state")
+
+        # 先决定，再动。用的是上一步留下的位置与张力 —— 她不能在动过之后
+        # 才决定要不要动。
+        self._action = self._choose_action()
 
         self._st = self.dynamics.step(self._st, self.landscape, self.rng)
         self._step_count += 1
@@ -361,6 +384,66 @@ class Stream:
 
         return ev
 
+    # ---------- 行动 ----------
+
+    def _choose_action(self) -> int:
+        """她此刻的动作。强制口只给干预实验用，正常运行时不设。"""
+        # 先把"这一次待了多久"记进她的账：区域换了就结算上一次。
+        node = self.detector.current_attractor
+        if node != self._dwell_region:
+            if self._dwell_region is not None and self._dwell > 0:
+                self._dwell_history.append(int(self._dwell))
+            self._dwell_region = node
+            self._dwell = 0
+        self._dwell += 1
+
+        if self.force_action is not None:
+            action = int(self.force_action)
+        else:
+            action = self.actions.choose(self._dwell, list(self._dwell_history))
+        self.action_counts[action] = self.action_counts.get(action, 0) + 1
+        if action == LEAVE:
+            self._apply_leave()
+        return action
+
+    def _own_scale(self):
+        """她自己量到的区域半径中位数。没有就不推。
+
+        第一次用的是梯度尺度，并且加在速度上 —— 实测 600 步后位移 6323，
+        因为每一步都在加速。现在改成按位置挪动、幅度是她的区域半径中位数：
+        单次动作有界（一个区域半径），不会累积成火箭。
+        """
+        attrs = self.landscape.state_space.attractors()
+        if not attrs:
+            return None
+        sigmas = np.asarray([float(a.sigma) for a in attrs], dtype=float)
+        sigmas = sigmas[np.isfinite(sigmas) & (sigmas > 0)]
+        if sigmas.size == 0:
+            return None
+        return float(np.median(sigmas))
+
+    def _apply_leave(self) -> None:
+        """背离当前区域质心挪一步：一步最多一个区域半径。"""
+        node = self.detector.current_attractor
+        attrs = self.landscape.state_space.attractors()
+        if node is None or not (0 <= int(node) < len(attrs)):
+            return
+        scale = self._own_scale()
+        if scale is None:
+            return
+        d = self.actions.direction(self._st.x, attrs[int(node)].mu, scale)
+        if d is not None:
+            self._st = DynamicState(x=self._st.x + d, v=self._st.v)
+
+    @property
+    def action_name(self) -> str:
+        return ACTION_NAMES.get(self._action, "hold")
+
+    @property
+    def leave_share(self) -> float:
+        total = sum(self.action_counts.values())
+        return self.action_counts.get(LEAVE, 0) / float(total) if total else 0.0
+
     # ---------- continuous output ----------
 
     def broadcast_state(self) -> dict:
@@ -396,6 +479,9 @@ class Stream:
                              if self.detector.current_attractor is not None else -1),
             "potential": (self.landscape.potential(st.x) if st is not None else 0.0),
             "n_attractors": len(ss),
+            # 行动是她自己的，不是从外面看出来的统计量：记名字与比例。
+            "action": ACTION_NAMES.get(self._action, "hold"),
+            "leave_share": round(self.leave_share, 4),
             "n_salient": len(ss.salient()),
             "global_scale": ss.global_scale,
             "viability": self.regulation.summary(ss),            # L3

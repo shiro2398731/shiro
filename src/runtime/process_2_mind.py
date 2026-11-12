@@ -295,6 +295,9 @@ def main() -> int:
                     "potential": round(ss["potential"], 4),
                     "noise": round(stream.landscape.noise_amplitude, 5),
                     "transitions": transitions,
+                    # 她的动作：谁选的、离开占多少。行动是她自己的，不是统计出来的。
+                    "action": ss["action"],
+                    "leave_share": ss["leave_share"],
                     # M1：她自己预测的命中率与当前增益（可 ablation 对照）
                     "self_accuracy": round(stream.self_gain.accuracy, 4),
                     # 命中率会被"待在原地"抬高：实测 0.9390 的 0 阶基线打不过
