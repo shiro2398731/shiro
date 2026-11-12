@@ -75,6 +75,11 @@ def _global_params(st: Stream, ss) -> dict:
 def _run(steps: int = STEPS, windows: int = WINDOWS) -> tuple[Stream, list[dict], dict]:
     st = Stream(dim=32)
     st.calibrate(np.zeros((1, st.D)))
+    # This test is about global parameters not drifting with age, not about the
+    # rehearsal loop. Turning the loop off keeps the 20000-step run from paying
+    # 156 deep copies (it took the suite from ~100 s to ~250 s when left on);
+    # the loop itself is covered by tests/test_loop.py.
+    st.rehearse_every = 0
     per = max(steps // windows, 1)
     series: list[dict] = []
     cohort: list = []

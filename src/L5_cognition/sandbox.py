@@ -52,6 +52,18 @@ def clone(stream) -> object:
     return copy
 
 
+def clone_fast(stream) -> object:
+    """同一具身体的浅层复制：内存里拷一份，不走存档格式。
+
+    用于她自己的循环里（每次预演都要复制一次，pickle 往返太贵）。
+    与 `clone()` 的差别只是速度；两者都必须不共享可变状态，
+    `tests/test_sandbox.py` 对两者都断言过"步进副本不会移动她"。
+    """
+    import copy
+
+    return copy.deepcopy(stream)
+
+
 def project(stream, steps: int, amplitude: float,
             force_action: Optional[int] = None) -> dict:
     """在副本上向前推演 `steps` 步，返回经过的区域序列与终点。

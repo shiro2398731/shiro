@@ -261,7 +261,7 @@ def main() -> int:
 
             # 噪声与偏转都由上游实测给出；她自己的预测误差只做有界缩放
             stream.landscape.set_noise_amplitude(
-                runner.noise_amplitude() * stream.self_gain.gain())
+                runner.noise_amplitude() * stream.exploration_gain)
             stream.landscape.set_deflection(runner.deflection())
 
             ev = stream.step()
@@ -299,6 +299,8 @@ def main() -> int:
                     "action": ss["action"],
                     "leave_share": ss["leave_share"],
                     # M1：她自己预测的命中率与当前增益（可 ablation 对照）
+                    "rehearsal_accuracy": ss["rehearsal_accuracy"],
+                    "rehearsals": ss["rehearsals"],
                     "self_accuracy": round(stream.self_gain.accuracy, 4),
                     # 命中率会被"待在原地"抬高：实测 0.9390 的 0 阶基线打不过
                     # 模型的 0.9325。真正能区分的是留出/前向对数损失，见 tools/m1_audit.py。

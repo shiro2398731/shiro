@@ -34,6 +34,13 @@ from .action import HOLD, LEAVE, NAMES as ACTION_NAMES, ActionGate
 
 # 过去多少个"她感到的张力"参与中位数比较。C1：缓冲区长度，不是判据。
 TENSION_MEMORY = 64
+
+# 记忆回路的观测节奏：每隔这么多步预演一次。C1（观测分辨率），不是判据。
+# 预演的步数由她自己的停留中位数决定（见 _rehearse_horizon），不写死。
+REHEARSE_CHECK_EVERY = 128
+
+# 过去多少次停留参与"预演多远"的中位数。C1：缓冲区长度。
+DWELL_MEMORY = 64
 from .adaptive_gain import ErrorDrivenGain
 from .grounding import GroundingTable
 from .self_model import OnlineSelfModel
@@ -148,6 +155,23 @@ class Stream:
         # 张力低时 56.9%），结果是她的张力在 600 步里 +6.44，而强制离开是 −2.25。
         self._tension_history: collections.deque = collections.deque(maxlen=TENSION_MEMORY)
         self._tension_now: float = 0.0
+
+        # ---- 记忆回路：预演 -> 打自己一巴掌 -> 改变探索 ----
+        # 预演用她自己的动力学在副本上跑（沙盒，不写回）；结算时的命中/未命中进
+        # 一个**独立的**增益，再与 M1 的增益相乘，最后缩放噪声幅度。
+        # 独立是刻意的：M1 是"下一步"的一步预测（每秒两次），预演是"到她会离开的时候"
+        # （每分钟一次）。混进同一个 EMA 里，预演那一票会被一步预测淹没，回路等于没接。
+        self.rehearse_every = int(REHEARSE_CHECK_EVERY)
+        self.rehearsal_gain = ErrorDrivenGain(rate=0.2)
+        self._rehearsal = None
+        self.rehearsal_total = 0
+        self.rehearsal_hits = 0
+        self.rehearsal_trivial = 0
+        self.rehearsal_history: collections.deque = collections.deque(maxlen=64)
+        self._dwell = 0
+        self._dwell_region = None
+        self._dwell_history: collections.deque = collections.deque(maxlen=DWELL_MEMORY)
+        self._amplitude_hint = 0.0
         # 只给 tools/intervene.py 用：强制某一边，用来做 do(a) 对照。
         self.force_action = None
 
@@ -220,6 +244,9 @@ class Stream:
         """
         if self._st is None:
             raise RuntimeError("Stream not calibrated: no zero point, no state")
+
+        # 记忆回路：可能开始一次预演，或结算上一次（都不改动她）
+        self._maybe_rehearse()
 
         # 先决定，再动。用的是上一步留下的位置与张力 —— 她不能在动过之后
         # 才决定要不要动。
@@ -383,7 +410,108 @@ class Stream:
         if aid is not None and b_speed is not None and b_tension is not None:
             self.grounding.observe(int(aid), (b_speed, b_tension))
 
+        # 记忆回路的结算：这一步实际到了哪里，走满预演步数后打分
+        self._settle_rehearsal()
+
         return ev
+
+    # ---------- 记忆回路 ----------
+
+    def _rehearse_horizon(self) -> int:
+        """预演多远：她过去每次停留时长的中位数。
+
+        实测依据（tools/rehearse.py）：预演在 14 步内与"原地不动"一样准，第 15 步起归零；
+        而她的停留中位数就在这个量级。所以"预演到她通常会离开的时候"是这条回路上
+        唯一有意义的长度——写死一个 k 只会得到一个永远对或永远错的回路。
+        """
+        if not self._dwell_history:
+            return 1
+        values = sorted(int(v) for v in self._dwell_history)
+        return max(int(values[len(values) // 2]), 1)
+
+    @staticmethod
+    def _first_exit(seq, start: int):
+        """第一次不在起点区域的步号（1 起算）；一次都没走开则返回 None。"""
+        for i, r in enumerate(seq):
+            if int(r) != int(start):
+                return i + 1
+        return None
+
+    def _maybe_rehearse(self) -> None:
+        """到点了就开一次预演。结算在 `_settle_rehearsal()` 里（步末）。"""
+        if self._rehearsal is not None:
+            return
+        if self.rehearse_every <= 0 or self._step_count % self.rehearse_every != 0:
+            return
+        if not self.landscape.noise_is_set:
+            return
+
+        horizon = self._rehearse_horizon()
+        amplitude = float(np.mean(np.asarray(self.landscape.noise_amplitude, dtype=float)))
+        from .sandbox import clone_fast
+
+        shadow = clone_fast(self)
+        shadow.rehearse_every = 0            # 副本不再自己预演，避免递归
+        # 副本必须拿一条**独立**的噪声。deepcopy 会把她的随机数发生器一起复制，
+        # 于是"预演"用的正是她接下来要用的那条噪声——那不是预演，是重放。
+        # 实测证据：不重播种子时 22 次预演全部命中（准确率 1.0），增益被钉在下界，
+        # 回路等于没接。这里用步号派生一个确定性种子：同一个她、同一个时刻，
+        # 每次预演的结果可复现，但与她实际要抖的方向无关。
+        shadow.rng = np.random.default_rng((int(self._step_count) * 2654435761) % (2 ** 32))
+        predicted = []
+        for _ in range(horizon):
+            shadow.landscape.set_noise_amplitude(amplitude)
+            shadow.step()
+            aid = shadow.detector.current_attractor
+            predicted.append(-1 if aid is None else int(aid))
+        start = self.detector.current_attractor
+        self._rehearsal = {
+            "remaining": horizon,
+            "predicted": predicted,
+            "actual": [],
+            "start": -1 if start is None else int(start),
+        }
+
+    def _settle_rehearsal(self) -> None:
+        """收集实际经过的区域；走满 horizon 步后结算。
+
+        打分的对象是**她什么时候离开**，不是"她是否还在原地"。
+        实测（2026-11-12）：按"终点是否相同"打分时，22 次预演全部命中、准确率 1.0 ——
+        那不是预演准，那是"她会待着"这件事本身很准（horizon=13，她的停留中位数也是 13）。
+        两边都说"她会待着"的时候没有证据，不计分（`rehearsal_trivial`）。
+        """
+        if self._rehearsal is None:
+            return
+        done = self.detector.current_attractor
+        done = -1 if done is None else int(done)
+        self._rehearsal["actual"].append(done)
+        self._rehearsal["remaining"] -= 1
+        if self._rehearsal["remaining"] > 0:
+            return
+
+        start = int(self._rehearsal["start"])
+        pred_exit = self._first_exit(self._rehearsal["predicted"], start)
+        act_exit = self._first_exit(self._rehearsal["actual"], start)
+        self._rehearsal = None
+
+        if pred_exit is None and act_exit is None:
+            self.rehearsal_trivial += 1
+            return
+        hit = pred_exit == act_exit
+        self.rehearsal_total += 1
+        self.rehearsal_hits += int(hit)
+        self.rehearsal_gain.observe(hit)
+        self.rehearsal_history.append((bool(hit), pred_exit, act_exit))
+
+    @property
+    def exploration_gain(self) -> float:
+        """她此刻的探索倍率：一步预测的增益 × 预演的增益。有界（两个都在 [0.8, 1.4]）。"""
+        return float(self.self_gain.gain()) * float(self.rehearsal_gain.gain())
+
+    @property
+    def rehearsal_accuracy(self) -> float:
+        return (self.rehearsal_hits / self.rehearsal_total
+                if self.rehearsal_total else 0.0)
 
     # ---------- 行动 ----------
 
@@ -391,6 +519,15 @@ class Stream:
         """她此刻的动作。强制口只给干预实验用，正常运行时不设。"""
         # 她自己感到的张力（上一步 set_drive 之后留下的那个）。先决定，再记账。
         self._tension_now = float(self.drive.summary().get("sum", 0.0))
+
+        # 停留账本只服务"预演多远"，不参与动作判据（动作看张力）。
+        node = self.detector.current_attractor
+        if node != self._dwell_region:
+            if self._dwell_region is not None and self._dwell > 0:
+                self._dwell_history.append(int(self._dwell))
+            self._dwell_region = node
+            self._dwell = 0
+        self._dwell += 1
 
         if self.force_action is not None:
             action = int(self.force_action)
@@ -480,6 +617,10 @@ class Stream:
             "action": ACTION_NAMES.get(self._action, "hold"),
             "leave_share": round(self.leave_share, 4),
             "tension_now": round(float(self._tension_now), 5),
+            "exploration_gain": round(self.exploration_gain, 4),
+            "rehearsal_accuracy": round(self.rehearsal_accuracy, 4),
+            "rehearsals": int(self.rehearsal_total),
+            "rehearsals_trivial": int(self.rehearsal_trivial),
             "n_salient": len(ss.salient()),
             "global_scale": ss.global_scale,
             "viability": self.regulation.summary(ss),            # L3
