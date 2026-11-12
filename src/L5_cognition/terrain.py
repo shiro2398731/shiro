@@ -478,10 +478,15 @@ class StateSpace:
         for a in self._attractors:
             depth_fraction = min(max(a.amp / max(self.ceiling, 1e-12), 0.0), 1.0)
             consistent = depth_fraction / (depth_fraction + 1.0) * med
-            a._scale_floor = max(global_floor, consistent)
-            # sigma is cached; the floor only takes effect once the cache is
-            # dropped, otherwise the cached value keeps the old scale.
-            a._sigma_cache = None
+            new_floor = max(global_floor, consistent)
+            # sigma is cached; a changed floor only takes effect once the cache
+            # is dropped. Dropping it unconditionally was measured to cost
+            # 26 sigma recomputations per step at 423 regions (this runs inside
+            # every recover(), i.e. every 16 steps), because the floor mostly
+            # does not change from one call to the next. Compare first.
+            if getattr(a, "_scale_floor", None) != new_floor:
+                a._scale_floor = new_floor
+                a._sigma_cache = None
 
         # Pull cap. The floors above keep any single region's gradient from
         # being far larger than the sum of the rest, but a region that is both

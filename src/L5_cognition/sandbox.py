@@ -58,10 +58,23 @@ def clone_fast(stream) -> object:
     用于她自己的循环里（每次预演都要复制一次，pickle 往返太贵）。
     与 `clone()` 的差别只是速度；两者都必须不共享可变状态，
     `tests/test_sandbox.py` 对两者都断言过"步进副本不会移动她"。
+
+    **先把日志摘掉再复制**。日志是一个打开的文件句柄：
+    - `copy.deepcopy` 遇到它直接抛 `cannot pickle 'BufferedWriter'`（实测）；
+    - 就算能复制，副本每记一次观测都会写进**她自己的** WAL —— 预演会污染她的经历。
+    副本不写日志，也不需要日志：它只是在内存里往前想几步。
     """
     import copy
 
-    return copy.deepcopy(stream)
+    space = stream.landscape.state_space
+    saved = space.journal
+    space.journal = None
+    try:
+        shadow = copy.deepcopy(stream)
+    finally:
+        space.journal = saved
+    shadow.landscape.state_space.journal = None
+    return shadow
 
 
 def project(stream, steps: int, amplitude: float,

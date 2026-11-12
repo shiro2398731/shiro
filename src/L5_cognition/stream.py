@@ -452,6 +452,8 @@ class Stream:
 
         shadow = clone_fast(self)
         shadow.rehearse_every = 0            # 副本不再自己预演，避免递归
+        # 副本绝不写日志：预演是"想一想"，不是"经历一次"。
+        shadow.landscape.state_space.journal = None
         # 副本必须拿一条**独立**的噪声。deepcopy 会把她的随机数发生器一起复制，
         # 于是"预演"用的正是她接下来要用的那条噪声——那不是预演，是重放。
         # 实测证据：不重播种子时 22 次预演全部命中（准确率 1.0），增益被钉在下界，
