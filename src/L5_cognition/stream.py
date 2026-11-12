@@ -32,8 +32,8 @@ from .transitions import Transition, TransitionDetector
 from .workspace import GlobalWorkspace, Ignition
 from .action import HOLD, LEAVE, NAMES as ACTION_NAMES, ActionGate
 
-# 过去多少次停留参与中位数比较。C1：缓冲区长度，不是判据。
-DWELL_MEMORY = 64
+# 过去多少个"她感到的张力"参与中位数比较。C1：缓冲区长度，不是判据。
+TENSION_MEMORY = 64
 from .adaptive_gain import ErrorDrivenGain
 from .grounding import GroundingTable
 from .self_model import OnlineSelfModel
@@ -143,10 +143,11 @@ class Stream:
         self.actions = ActionGate()
         self._action: int = HOLD
         self.action_counts: dict[int, int] = {HOLD: 0, LEAVE: 0}
-        # 她在这个区域待了多少步，以及过去每次待了多久。判据只用这两个量。
-        self._dwell: int = 0
-        self._dwell_history: collections.deque = collections.deque(maxlen=DWELL_MEMORY)
-        self._dwell_region: Optional[int] = None
+        # 她感到过的张力。判据 = 现在是否高于她自己过去的中位数。
+        # 用这个而不是"停留时长"：实测停留判据与张力反向（张力高时离开 27.4%，
+        # 张力低时 56.9%），结果是她的张力在 600 步里 +6.44，而强制离开是 −2.25。
+        self._tension_history: collections.deque = collections.deque(maxlen=TENSION_MEMORY)
+        self._tension_now: float = 0.0
         # 只给 tools/intervene.py 用：强制某一边，用来做 do(a) 对照。
         self.force_action = None
 
@@ -388,19 +389,15 @@ class Stream:
 
     def _choose_action(self) -> int:
         """她此刻的动作。强制口只给干预实验用，正常运行时不设。"""
-        # 先把"这一次待了多久"记进她的账：区域换了就结算上一次。
-        node = self.detector.current_attractor
-        if node != self._dwell_region:
-            if self._dwell_region is not None and self._dwell > 0:
-                self._dwell_history.append(int(self._dwell))
-            self._dwell_region = node
-            self._dwell = 0
-        self._dwell += 1
+        # 她自己感到的张力（上一步 set_drive 之后留下的那个）。先决定，再记账。
+        self._tension_now = float(self.drive.summary().get("sum", 0.0))
 
         if self.force_action is not None:
             action = int(self.force_action)
         else:
-            action = self.actions.choose(self._dwell, list(self._dwell_history))
+            action = self.actions.choose(self._tension_now, list(self._tension_history))
+        self._tension_history.append(self._tension_now)
+
         self.action_counts[action] = self.action_counts.get(action, 0) + 1
         if action == LEAVE:
             self._apply_leave()
@@ -482,6 +479,7 @@ class Stream:
             # 行动是她自己的，不是从外面看出来的统计量：记名字与比例。
             "action": ACTION_NAMES.get(self._action, "hold"),
             "leave_share": round(self.leave_share, 4),
+            "tension_now": round(float(self._tension_now), 5),
             "n_salient": len(ss.salient()),
             "global_scale": ss.global_scale,
             "viability": self.regulation.summary(ss),            # L3

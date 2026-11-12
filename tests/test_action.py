@@ -2,9 +2,11 @@ r"""行动：她能选，而且这一步真的接到动力学上。
 
 三条要钉住的东西，对应三个曾经出过错的地方：
 
-1. **选择里没有我们的偏好**：`choose()` 的判据只有"这一次待得比她自己通常待的久"，
-   函数体内不含 float 字面量（AST）。第一次的判据用的是张力中位数，实测她 1000 步里
-   0 次选择离开 —— 退化成一个常数，这条测试会把它抓回来。
+1. **选择里没有我们的偏好**：`choose()` 的判据只有"现在比她通常更没解决"（用她自己
+   张力的中位数），函数体内不含 float 字面量（AST）。
+   两次改判据都留了证：用"区域张力 > 所有区域中位数"时她 1000 步 **0 次**离开（退化）；
+   用"停留时长 > 自己的中位数"时**方向是反的**（张力高时离开 27.4%，低时 56.9%，
+   结果她的张力 +6.44，而强制离开 −2.25）。这条测试钉住的是"必须跟着张力走"。
 2. **单次动作有界**：第一次把推开量加在速度上并每步施加，600 步位移 6323（火箭）。
    现在按位置挪动、幅度是她自己的区域半径中位数，所以 N 步最多 N 个半径。
 3. **干预可检出**：强制 do(leave) 与 do(hold) 在同一条噪声上跑，P(下一步仍在原区域)
@@ -68,12 +70,26 @@ def test_choice_has_no_float_literals() -> None:
 
 def test_choice_is_her_own_median() -> None:
     g = ActionGate()
-    past = [2, 2, 2, 9]
-    assert g.choose(3, past) == LEAVE, "longer than her own median -> leave"
-    assert g.choose(2, past) == HOLD, "at her median -> stay"
-    assert g.choose(1, past) == HOLD
-    assert g.choose(50, []) == HOLD, "nothing to compare with -> cannot decide to leave"
-    print("       dwell 3 vs median 2 -> leave; dwell 2 -> hold; no history -> hold")
+    past = [2.0, 2.0, 2.0, 9.0]
+    assert g.choose(3.0, past) == LEAVE, "more unresolved than usual -> leave"
+    assert g.choose(2.0, past) == HOLD, "at her median -> stay"
+    assert g.choose(1.0, past) == HOLD
+    assert g.choose(50.0, []) == HOLD, "nothing to compare with -> cannot decide to leave"
+    print("       tension 3 vs median 2 -> leave; 2 -> hold; no history -> hold")
+
+
+def test_decision_follows_tension_not_staying_power() -> None:
+    """The inverted criterion is gone: higher tension must mean more likely to leave.
+
+    Measured with the old dwell rule: P(leave | tension > median) = 0.2736 against
+    P(leave | tension <= median) = 0.5691 -- backwards, and her tension rose +6.44
+    over 600 steps while a forced leave lowered it 2.25.
+    """
+    g = ActionGate()
+    past = [5.0] * 31 + [9.0]
+    low = sum(1 for t in (1.0, 2.0, 3.0, 4.0) if g.choose(t, past) == LEAVE)
+    high = sum(1 for t in (6.0, 7.0, 8.0, 10.0) if g.choose(t, past) == LEAVE)
+    assert low == 0 and high == 4, (low, high)
 
 
 def test_direction_is_unit_length_times_her_scale() -> None:
