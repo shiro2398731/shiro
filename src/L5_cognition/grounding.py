@@ -19,9 +19,14 @@ L6 现在拿到的符号只有 `attractor_id` —— 一个编号。编号本身
     I(符号; 指代)  经验互信息，单位 bits
     打乱指代序列后重算的 I  作为零假设的下界（经验 MI 有有限样本偏置）
 
-实测（她的真实存档，3000 步，12 个符号 × 16 个指代桶，n=2936；`python tools/grounding.py`）：
-    MI(real) = 0.7395 bits，MI(shuffled) = 0.0463 bits —— 真实的指代信息是零假设的 16 倍。
-即：她的区域编号不是随机的，它带着关于她自己状态的真实信息。
+实测（她的真实存档，4000 步；`python tools/grounding.py`）：
+    plug-in MI(符号; 状态桶) = 0.6096 bits，打乱后 0.0324 bits（18.8x）
+    **但留出法增益 = -0.0517 bits** —— 表记住了样本，符号对瞬时状态量没有指代。
+    留出法另测 p(下一个区域 | 当前区域)：3.3325 → 0.7226 bits，增益 +2.6099（78.3%）。
+
+所以本模块目前能支持的说法只有一句：**符号不贴着某个内在标量，但带着关于她下一步的信息**。
+plug-in MI 在样本稀疏时严重上偏，判据必须是留出法（`tools/grounding.py` 的第二、三项）；
+本文件的 `mutual_information()` 只能当描述性统计，不能单独作为"指代成立"的证据。
 
 为什么指代必须是离散的
 ----------------------
@@ -120,11 +125,28 @@ class GroundingTable:
         return max(total, 0.0)
 
     def _entropy_context(self) -> float:
+        return self.entropy_context()
+
+    def entropy_context(self) -> float:
+        """H(context) in bits: how much her internal state varies, as bucketed."""
         n = self.total
         if n <= 0:
             return 0.0
         return -sum((k / float(n)) * math.log2(k / float(n))
                     for k in self.context_totals.values() if k > 0)
+
+    def entropy_symbol(self) -> float:
+        """H(symbol) in bits: how much variety the symbols themselves carry.
+
+        This is the ceiling on what any sentence built from these symbols can
+        say about her: a dictionary cannot add information the symbol stream
+        does not contain (data processing inequality).
+        """
+        n = self.total
+        if n <= 0:
+            return 0.0
+        return -sum((k / float(n)) * math.log2(k / float(n))
+                    for k in self.symbol_totals.values() if k > 0)
 
     def specificity(self, symbol: int) -> float:
         """Share of the context entropy the symbol removes: 1 - H(c|s)/H(c)."""

@@ -6,9 +6,14 @@ information plus the same quantity after shuffling the contexts, which is the
 finite-sample floor. If the real value is not clearly above the shuffled one,
 the symbol refers to nothing and this file fails.
 
-Measured on her real archive (3000 steps, 12 symbols x 16 contexts, n=2936;
-`python tools/grounding.py`):
-    MI(real) = 0.7395 bits, MI(shuffled) = 0.0463 bits  (16x)
+Measured on her real archive (`python tools/grounding.py`, 4000 steps):
+    plug-in MI(symbol; state buckets) = 0.6096 bits, shuffled 0.0324 (18.8x)
+    held-out gain on the SAME target  = -0.0517 bits   <- no reference to it
+    held-out gain, p(next region | current region) = +2.6099 of 3.3325 bits (78.3%)
+
+So the tests below are about the estimator (a table that can carry information at
+all, and that a null really kills), not evidence that her symbols refer to her
+internal scalars. The held-out evaluation in tools/grounding.py is the criterion.
 
 Also pinned: no text path. `grounding.py` may import nothing that carries
 language, and `observe()` may take numbers only (INV-8: quantities in,

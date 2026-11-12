@@ -68,6 +68,10 @@
    `tests/test_grounding.py` 9 例；`tools/grounding.py` 出报告并自检「引擎表 == 探针表」。
    **剩下**：输入侧（文本 → L1 观测量，护栏沿用 `test_content_provenance` 的 3σ），
    以及 L6 真正拿 referent 造句（当前翻译器只吃编号）。
+   **2026-11-10 下午修正**：PLUG-IN MI 0.7395/0.6096 bits 是偏置。留出法（同数据）：
+   状态靶（speed/tension）增益 **−0.0517 bits**（无指代）；转移靶（下一个区域）增益 **+2.6099 / 3.3325 bits（78.3%）**。
+   结论改为：符号不指代瞬时状态量，但编码转移结构 → 符号定义应往「转移上下文」走。
+   `tools/grounding.py` 默认打印三项留出法；`mutual_information()` 只作描述性统计。
 8. 规则级可塑性（需单独设计）。
 
 
