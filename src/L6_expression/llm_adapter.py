@@ -118,6 +118,7 @@ class LlmAdapter:
             text = ""      # 说不出话
 
         rec = {
+            "origin": "llm",     # provenance, same vocabulary as TemplateAdapter
             "t": datetime.now(timezone.utc).isoformat(),
             "symbols": payload,
             "text": text,

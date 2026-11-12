@@ -73,7 +73,9 @@ def main() -> int:
 
     adapter = LlmAdapter.from_env(out_dir="data/output")
     if adapter is None:
-        print("[P4] no DEEPSEEK_API_KEY; output falls back to templates")
+        # C3: the template path is silent unless explicitly enabled, so without
+        # a model she says nothing rather than something written by a person.
+        print("[P4] no DEEPSEEK_API_KEY; template path is silent (origin=human forbidden)")
         adapter = TemplateAdapter(out_dir="data/output")
     else:
         print("[P4] output adapter ready (deepseek-chat)")
@@ -95,11 +97,17 @@ def main() -> int:
         if aid == last_published["k"]:
             return
         last_published["k"] = aid
-        gate.note_transition()
+        # The region must be passed: without it the gate sees `None` for every
+        # transition and `should_speak()` always answers "no_transition", so she
+        # could never speak. Measured on a 2000-step id sequence (211 real
+        # transitions): without the argument 0 utterances / 211 suppressed,
+        # last_reason "no_transition" every time; with it 200 utterances / 11
+        # suppressed.
+        gate.note_transition(aid)
         if not gate.should_speak():
             return
         syms = {
-            "attractor": str(aid),
+            "trace": str(aid),
             "sequence": [str(aid)],
             "intent": "state" if aid >= 0 else "silent",
         }

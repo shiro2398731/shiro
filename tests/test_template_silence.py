@@ -44,6 +44,38 @@ def test_silence_counter_accumulates() -> None:
         assert a.silenced == 3
 
 
+def test_adapter_whitelist_keeps_the_trace_field_p4_sends() -> None:
+    """P4 used to send `attractor`, which the whitelist silently dropped.
+
+    The model then translated without knowing which region she is in, and
+    nothing reported it. This pins the contract: the symbol name P4 uses is the
+    one the whitelist keeps, a vector or an unknown key never gets through, and
+    the record declares its provenance.
+    """
+    import json
+    import tempfile
+
+    from src.L6_expression.llm_adapter import LlmAdapter
+
+    seen: dict = {}
+
+    with tempfile.TemporaryDirectory() as d:
+        a = LlmAdapter(api_key="test-key", out_dir=d)
+        a._call_api = lambda payload: (seen.update(payload), None)[1]
+        a.translate({"trace": "7", "sequence": ["7"], "intent": "state",
+                     "attractor": "7", "x": [0.1, 0.2]})
+
+        assert "trace" in seen, f"the region id was dropped: {seen}"
+        assert "attractor" not in seen and "x" not in seen, seen
+
+        files = list(pathlib.Path(d).iterdir())
+        assert files, "a record must exist even when the model says nothing"
+        rec = json.loads(files[0].read_text(encoding="utf-8").strip().splitlines()[-1])
+        assert rec["origin"] == "llm", rec
+        assert rec["symbols"] == seen, rec["symbols"]
+    print(f"       whitelist kept {sorted(seen)}, origin=llm")
+
+
 def main() -> int:
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0
