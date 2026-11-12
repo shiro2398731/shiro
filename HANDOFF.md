@@ -20,7 +20,7 @@
 
 | 项 | 值 |
 |---|---|
-| 测试 | **22 个非空文件 / 120 例，全通过**（逐个 `python 文件` 运行；全套 54 s） |
+| 测试 | **23 个非空文件 / 129 例，全通过**（逐个 `python 文件` 运行；全套 62 s） |
 | 空占位 | `test_L0..L8.py`、`test_integration.py`、`__init__.py` 均为 0 字节，**不计入分母** |
 | 引擎版本 | `src/common/bundle.py: ENGINE_VERSION = "0.4.0"` |
 | 存档 | `data/state/l5.pkl`：307 区域、71 边、145504 步、29 显著、`mu_finite=True`、`|mu|max=4.512` |
@@ -58,8 +58,13 @@
    不 import 本项目；行为：同一转移只说一次、记忆满了淘汰最旧而非永久闭嘴）。
    同时修 P4 两处：`note_transition()` 没传区域（实测 211 次转移 0 次出声 → 传区域后 200 次出声）；
    符号名 `attractor` 被白名单丢弃（应为 `trace`）。
-7. **L6 grounding**：符号↔语义双向映射；语用必须在 L6 内部丢弃（INV-8 前置）。
-   建议先做输出侧（符号↔区域互信息），输入侧沿用 `test_content_provenance` 的 3σ 护栏。
+7. **L6 grounding**（输出侧已完成，2026-11-10 上午）：`src/L5_cognition/grounding.py` 统计
+   「区域编号 ↔ 它出现时 speed/tension 在她自己历史中的分位桶」，判据 = 互信息 vs 打乱后的零假设。
+   实测（真存档 3000 步）：MI 0.7395 bits vs shuffled 0.0463 bits（16x），12 符号 × 16 桶。
+   指代以离散标签交给 L6（`SymbolBundle.referent`，ARCHITECTURE §4.2 不许向量），并入 L5 payload。
+   `tests/test_grounding.py` 9 例；`tools/grounding.py` 出报告并自检「引擎表 == 探针表」。
+   **剩下**：输入侧（文本 → L1 观测量，护栏沿用 `test_content_provenance` 的 3σ），
+   以及 L6 真正拿 referent 造句（当前翻译器只吃编号）。
 8. 规则级可塑性（需单独设计）。
 
 

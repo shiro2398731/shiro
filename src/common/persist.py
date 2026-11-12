@@ -253,6 +253,10 @@ def build_l5_payload(stream) -> dict:
         },
         "last_symbol": (None if stream._last_symbol is None
                         else int(stream._last_symbol)),
+        # L6 grounding: symbol -> referent counts. Part of her state: the labels
+        # L6 receives are derived from this table, so a restart that dropped it
+        # would make every symbol mean "none" again.
+        "grounding": stream.grounding.to_dict(),
         "identity": {
             "rounds": stream.identity.rounds,
             "appear": {f"{a},{b}": c
@@ -415,6 +419,13 @@ def apply_l5_payload(stream, payload: dict) -> None:
         stream.self_gain.hits = int(sg.get("hits", 0))
     ls_symbol = payload.get("last_symbol")
     stream._last_symbol = None if ls_symbol is None else int(ls_symbol)
+
+    # L6 grounding. Missing in older checkpoints: every symbol starts as
+    # "none", which is the honest state for a table that was never measured.
+    gr = payload.get("grounding")
+    if gr is not None:
+        from src.L5_cognition.grounding import GroundingTable
+        stream.grounding = GroundingTable.from_dict(gr)
 
     ident = payload.get("identity")
     if ident is not None:

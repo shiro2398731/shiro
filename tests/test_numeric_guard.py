@@ -67,36 +67,25 @@ def test_non_finite_observation_is_refused() -> None:
 
 
 def test_save_refuses_and_leaves_previous_file_intact() -> None:
-    """The whole point: a run that goes bad must not damage the good checkpoint."""
-    class _FakeStream:
-        pass
+    """The whole point: a run that goes bad must not damage the good checkpoint.
+
+    Uses a real Stream rather than a stub. A stub had to be extended every time
+    the payload grew a field (self_model, then grounding), and each extension
+    was invisible until the test failed: the payload contract is exactly what
+    this test should be exercising, not bypassing.
+    """
+    from src.L5_cognition.stream import Stream
 
     with tempfile.TemporaryDirectory() as d:
         old = persist.STATE_DIR
         persist.STATE_DIR = pathlib.Path(d)
         try:
+            stream = Stream(dim=32)
+            space = stream.landscape.state_space
             from src.L5_cognition.terrain import Attractor
 
-            space = StateSpace()
             space._attractors.append(Attractor(mu=np.zeros(space.D), amp=0.5))
             space._attractors.append(Attractor(mu=np.ones(space.D) * 0.1, amp=0.3))
-
-            stream = _FakeStream()
-            stream.landscape = type("L", (), {})()
-            stream.landscape._zero = np.zeros(space.D)
-            space.journal = None
-            stream.landscape.state_space = space
-            stream.graph = type("G", (), {"to_dict": lambda self: {}})()
-            stream.identity = type("I", (), {"rounds": 0, "_appear": {}})()
-            stream._st = None
-            stream._step_count = 0
-            # M1: the payload now carries her self-model and its gain. The stub
-            # has to provide them, because the payload contract says they exist.
-            from src.L5_cognition.adaptive_gain import ErrorDrivenGain
-            from src.L5_cognition.self_model import OnlineSelfModel
-            stream.self_model = OnlineSelfModel()
-            stream.self_gain = ErrorDrivenGain()
-            stream._last_symbol = None
 
             persist.save_l5(stream, "l5.pkl")
             before = (pathlib.Path(d) / "l5.pkl").read_bytes()

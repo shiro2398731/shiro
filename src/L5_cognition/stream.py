@@ -29,6 +29,7 @@ from .terrain import StateSpace
 from .transitions import Transition, TransitionDetector
 from .workspace import GlobalWorkspace, Ignition
 from .adaptive_gain import ErrorDrivenGain
+from .grounding import GroundingTable
 from .self_model import OnlineSelfModel
 from src.L3_memory import Consolidator, Recall, RecallEngine, TraceGraph
 from src.L4_drive import Drive
@@ -45,11 +46,17 @@ class SymbolBundle:
 
     attractor_id is the index of the nearest salient attractor, or "none".
     It carries no semantic content.
+
+    referent is a discrete label for what that region has most often meant in
+    her own terms (see grounding.GroundingTable): a code for where two measured
+    quantities sat inside her own history. Still a label, not a vector, because
+    §4.2 forbids L6 from receiving vectors.
     """
     attractor_id: str
     transition_seq: list[str]
     intent: str
     t_event: str
+    referent: str = "none"
 
 
 class Stream:
@@ -118,6 +125,11 @@ class Stream:
         self.self_model = OnlineSelfModel()
         self.self_gain = ErrorDrivenGain()
         self._last_symbol: Optional[int] = None
+
+        # ---- L6 grounding: what a region has meant, in her own terms ----
+        # Lives here, not in L6, because it needs continuous quantities (speed,
+        # tension) that L6 is not allowed to receive. L6 gets only the label.
+        self.grounding = GroundingTable()
 
         # Rest and swing were built while trying to find an internal source of
         # motion: without noise the state settled and stopped, and two attempts
@@ -236,9 +248,9 @@ class Stream:
             )
 
         # L3: connect consecutive attractors when the transition is direct.
+        node: Optional[int] = None
         if a is not None:
             attrs = self.landscape.state_space.attractors()
-            node = None
             for i, item in enumerate(attrs):
                 if item is a:
                     node = i
@@ -276,6 +288,21 @@ class Stream:
         self.landscape.set_drive(
             self.drive.deflection(self.landscape.state_space, self.graph)
         )
+
+        # L6 grounding: record which region this is *and* where two measured
+        # quantities sat inside her own history at the same moment. Done at the
+        # end of the step, on purpose: the symbol has to be the one L6 will
+        # receive (`detector.current_attractor`), not the index in the attractor
+        # list. Measured with the list index instead, the engine's table scored
+        # MI = 1.0240 bits while a probe keyed on the broadcast id scored 0.7395
+        # -- two different numberings of the same regions.
+        #
+        # Both buckets are None until her history is long enough, and an
+        # unmeasured context is not counted as "low".
+        _speed = Dynamics.speed(self._st)
+        _tension = float(self.drive.summary().get("sum", 0.0))
+        b_speed = self.grounding.bucket("speed", _speed)
+        b_tension = self.grounding.bucket("tension", _tension)
 
         # Recovery, counted in integration steps.
         if self._step_count % self._recover_every == 0:
@@ -322,9 +349,17 @@ class Stream:
             self.identity.snapshot(self.graph)
             self._last_core = self.identity.observe(self.graph)
 
-        return self.detector.observe(
+        ev = self.detector.observe(
             self._st, datetime.now(timezone.utc).isoformat()
         )
+
+        # L6 grounding, second half: the symbol is the id the detector just
+        # published, and the context was measured above, in the same step.
+        aid = self.detector.current_attractor
+        if aid is not None and b_speed is not None and b_tension is not None:
+            self.grounding.observe(int(aid), (b_speed, b_tension))
+
+        return ev
 
     # ---------- continuous output ----------
 
@@ -397,4 +432,7 @@ class Stream:
             transition_seq=[str(s) for s in seq],
             intent="state" if aid is not None else "silent",
             t_event=datetime.now(timezone.utc).isoformat(),
+            # A label, not a number: the region's most usual position in her
+            # own measured context, or "none" when that is not yet measurable.
+            referent=(self.grounding.label(int(aid)) if aid is not None else "none"),
         )
