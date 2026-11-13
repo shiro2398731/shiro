@@ -116,7 +116,17 @@
    被删行整行丢弃并计数（`grounding.dropped_by_remap`），不猜归属。
    实测：删中间区域 → 图边 (0,1),(1,2),(2,3) 变为 (1,2)；指代表键 [1,2]；自模型键 [1]。
    `tests/test_index_remap.py` 6 例。仍未做：给区域**稳定 uid**（合并后符号不再漂移），表下标仍是位置性的。
-13. 规则级可塑性（需单独设计）。
+13. ~~**真跑一次验证（2026-11-13 夜）**~~ 已跑：700 步 / 约 6 分钟 / 约 1.9 步每秒，干净停止。
+   过程中抓到两个真 bug：
+   (a) **11-08 那份爆炸日志被每次启动重放**，往健康存档注入 1e306 的区域，P2 死于 non-finite。
+      guard 保住了存档（仍 307 区域），但逐条过滤不够（一样写进 338 区域）→ 改成**整本作废**
+      （`replay()` 返回 `aborted`），日志隔离为 `data/journal/l5.wal.blownup-2026-11-08`。
+   (b) **`NameError: bs`**：我删了 `bs = stream.broadcast_state()` 而 publish 还在用；所有单测都过。
+      新增 `tests/test_static_names.py`（symtable 找未定义全局名，扫 src+tools 58 模块）。
+   落盘：6.4 MB / 365 区域 / |mu|max=4.512 / 130 边 / self_bits=2.2724。
+   未覆盖：`dropped_by_remap=0`（没有区域被删），重编号路径仍只有单测；self_bits 从 0.86 涨到 2.27，
+   只有一次运行，不能当结论。启动前备份：`data/state/l5.pkl.preverify`。
+14. 规则级可塑性（需单独设计）。
 
 
 ## 4. 硬约束（违反即回滚）
