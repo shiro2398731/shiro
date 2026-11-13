@@ -386,8 +386,14 @@ class Stream:
             else:
                 self.landscape.state_space.set_wall(None)
 
+        # 结构可能变了（recover 删过区域、或刚刚合并过）：先把旧->新编号取出来，
+        # 让自己身上的编号跟着改，再把同一张表交给图去做对齐。
+        _remap = self.landscape.state_space.take_index_remap()
+        if _remap is not None:
+            self._apply_index_remap(_remap)
+
         # Attractor count may have changed through recovery or merging.
-        self.consolidator.sync(self.graph, self.landscape.state_space)
+        self.consolidator.sync(self.graph, self.landscape.state_space, remap=_remap)
 
         # Workspace: read-only.
         self._last_ignition = self.workspace.observe(
@@ -414,6 +420,28 @@ class Stream:
         self._settle_rehearsal()
 
         return ev
+
+    # ---------- 区域重编号 ----------
+
+    def _apply_index_remap(self, remap: dict) -> None:
+        """结构变化后，把所有存着旧编号的地方一起改号。
+
+        区域编号是位置性的：删掉中间一个，后面每个都往前挪一位。图、指代表、
+        自模型、广播给 L6 的 id 都存着编号，不跟着改就会**静默指到邻居身上**。
+        被删掉的区域没有新编号：指代表里那一行整行丢弃并计数（不能猜它并入了谁）。
+        """
+        self.grounding.reindex(remap)
+        self.self_model.reindex(remap)
+        for attr in ("_last_symbol", "_dwell_region"):
+            old_i = getattr(self, attr, None)
+            if old_i is not None:
+                setattr(self, attr, remap.get(int(old_i)))
+        cur = getattr(self.detector, "_current", None)
+        self.detector._current = None if cur is None else remap.get(int(cur))
+        pending = self._rehearsal
+        if pending is not None:
+            pending["predicted"] = [remap.get(int(i), -1) for i in pending["predicted"]]
+            pending["start"] = remap.get(int(pending["start"]), -1)
 
     # ---------- 记忆回路 ----------
 

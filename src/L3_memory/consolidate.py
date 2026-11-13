@@ -56,18 +56,30 @@ class Consolidator:
 
     # ---------- alignment ----------
 
-    def sync(self, graph: TraceGraph, state_space) -> dict:
+    def sync(self, graph: TraceGraph, state_space,
+             remap: Optional[dict] = None) -> dict:
         """
         Align the graph with the current attractor list.
 
-        Assumption: the state space only ever shrinks its attractor list
-        (through merging in _merge_overlapping and removal in recover).
-        Edges referring to indices >= len(state_space) are removed and the
-        remainder is renumbered.
+        `remap` is the state space's old->new index map for the structural
+        change that just happened (`StateSpace.take_index_remap`). It is the
+        only correct input: the old version assumed the list only ever loses
+        its *last* entries and kept edges with index below the new length, so
+        removing a middle region left every later edge pointing at its
+        neighbour. Passing the map makes `prune` (which renumbers survivors in
+        order) line the graph up exactly.
+
+        Without a map the old behaviour is kept for callers that only need a
+        bounds check.
         """
         n = len(state_space)
-        alive = {i for i in range(n)}
         before = len(graph)
+        if remap is not None:
+            if all(e.a < n and e.b < n for e in graph.edges()) and len(remap) == n:
+                return {"dropped_edges": 0}
+            graph.prune({int(k) for k in remap.keys()})
+            return {"dropped_edges": before - len(graph)}
+        alive = {i for i in range(n)}
         # If nothing has changed, rebuilding the whole edge dictionary every
         # step is pure cost. Rewriting it is O(E) with a Python loop over every
         # edge; at a few hundred edges that is a meaningful share of a 3 ms step.

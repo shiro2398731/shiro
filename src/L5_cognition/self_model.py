@@ -143,6 +143,34 @@ class OnlineSelfModel:
     def chance(self) -> float:
         return 1.0 / max(self.states_seen, 1)
 
+    def reindex(self, remap: dict) -> int:
+        """Renumber symbol keys with old -> new; rows of removed symbols are dropped."""
+        new_counts: dict[int, dict] = {}
+        new_seen: dict[int, float] = {}
+        dropped = 0
+        for s, row in self._counts.items():
+            new_s = remap.get(int(s))
+            if new_s is None:
+                dropped += int(sum(row.values()))
+                continue
+            tgt = new_counts.setdefault(int(new_s), {})
+            for n_, c in row.items():
+                # The *target* is a region id too. Remapping only the symbol
+                # leaves transitions pointing at whatever now sits at the old
+                # index -- the exact class of error this whole change is about.
+                new_n = remap.get(int(n_))
+                if new_n is None:
+                    dropped += int(float(c))
+                    continue
+                tgt[int(new_n)] = tgt.get(int(new_n), 0.0) + float(c)
+        for s, v in self._seen.items():
+            new_s = remap.get(int(s))
+            if new_s is not None:
+                new_seen[int(new_s)] = new_seen.get(int(new_s), 0.0) + float(v)
+        self._counts = new_counts
+        self._seen = new_seen
+        return int(dropped)
+
     # ---------- persistence ----------
     # Keys become strings on the way through JSON (carrier), so both sides are
     # converted explicitly rather than relying on the container's behaviour.

@@ -304,6 +304,18 @@ class StateSpace:
         # measuring per-region visit rate.
         self._total_steps: int = 0
 
+        # old index -> new index for the most recent structural change
+        # (removal in recover(), merge, fold). Consumed with take_index_remap().
+        #
+        # Why this exists: region ids are positional, so removing one entry
+        # shifts every later one. Anything that stores a region id outside this
+        # list -- graph edges, the grounding table, the self-model, the symbol
+        # broadcast to L6 -- silently starts pointing at a different region.
+        # `Consolidator.sync` used to "fix" the graph by keeping edges with
+        # index < new_length, which is only correct when the *last* regions are
+        # the ones that vanished.
+        self._index_remap: Optional[dict[int, int]] = None
+
         # 追加式日志（src/common/journal.py）。为 None 时不记录。
         # 记的是'她经历了什么'，不是'她成了什么样'——后者由重放算出来。
         self.journal = None
@@ -851,9 +863,25 @@ class StateSpace:
         a._last_seen_step = max(int(getattr(a, "_last_seen_step", 0)),
                                 int(getattr(b, "_last_seen_step", 0)))
         a._sigma_cache = None
+        before = len(self._attractors)
         del self._attractors[j]
+        self._publish_remap(before, [i for i in range(before) if i != j])
         self._invalidate_scale()
         return True
+
+    # ---------- identity under structural change ----------
+
+    def _publish_remap(self, before: int, kept: list[int]) -> None:
+        """Record old->new for the indices that survived a structural change."""
+        if len(kept) == before:
+            return
+        self._index_remap = {old: new for new, old in enumerate(kept)}
+
+    def take_index_remap(self) -> Optional[dict[int, int]]:
+        """Return and clear the last old->new map (None when nothing moved)."""
+        m = self._index_remap
+        self._index_remap = None
+        return m
 
     # Compatibility alias.
     def _prune(self) -> None:
@@ -977,8 +1005,10 @@ class StateSpace:
                 })
             else:
                 keep.append(a)
-        removed = len(self._attractors) - len(keep)
+        before = len(self._attractors)
+        removed = before - len(keep)
         self._attractors = keep
+        self._publish_remap(before, [i for i in range(before) if i not in drop])
         self._invalidate_scale()
         return removed
 
@@ -1135,7 +1165,8 @@ class StateSpace:
 
         total = max(self._total_steps, 1)
         alive: List[Attractor] = []
-        for a in self._attractors:
+        kept_old: List[int] = []
+        for old_i, a in enumerate(self._attractors):
             if a._decay_factor is None:
                 a._decay_factor = max(
                     float(1.0 + rng.normal(0.0, self.decay_spread)), 0.05
@@ -1158,8 +1189,11 @@ class StateSpace:
             a.amp *= max(1.0 - rate, 0.0)
             if a.amp >= self.min_amp:
                 alive.append(a)
-        if len(alive) != len(self._attractors):
+                kept_old.append(old_i)
+        before = len(self._attractors)
+        if len(alive) != before:
             self._invalidate_scale()
+            self._publish_remap(before, [int(i) for i in kept_old])
         self._attractors = alive
         self._apply_scale_floor()
 
