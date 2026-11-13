@@ -320,6 +320,12 @@ def main() -> int:
             # 发布 l5.state.stream。P4（L6）靠它拿符号，P3 靠它记录。
             # payload carries a vector, but L6 may read attractor_id only
             # (ARCHITECTURE section 4.2).
+            #
+            # 这一行是必须的：下面 publish 用的是 broadcast_state() 的字段。
+            # 2026-11-13 我改快照时把它连同 dedupe 一起删了，于是 P2 每步
+            # 都在这里抛 NameError: bs，supervisor 连续 5 次后放弃重启 ——
+            # 而她看起来"活着"（P1 在跑），只有日志里能看到。
+            bs = stream.broadcast_state()
             bus.publish(
                 "l5.state.stream",
                 StreamState(

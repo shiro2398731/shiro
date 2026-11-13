@@ -96,6 +96,45 @@ def test_empty_journal_is_a_noop() -> None:
         assert len(space.attractors()) == 0
 
 
+def test_one_bad_record_voids_the_whole_log() -> None:
+    """Fail closed: a log with one unusable record is not replayed at all.
+
+    2026-11-13, measured live: the journal left over from the 11-08 runaway was
+    replayed onto a healthy archive. Filtering the ~1e306 records was not
+    enough -- the moderately wrong ones from the same diverged run were
+    accepted, and her archive grew to 338 regions where a coherent history had
+    307. Replaying the survivors rebuilds a body that never existed, so the
+    whole log is refused instead.
+    """
+    rng = np.random.default_rng(3)
+    with tempfile.TemporaryDirectory() as d:
+        path = pathlib.Path(d) / "l5.wal"
+        live = StateSpace()
+        j = Journal(path)
+        live.journal = j
+        good = [rng.normal(size=StateSpace().D) for _ in range(30)]
+        _run(live, good)
+        # one absurd but finite observation, then one non-finite
+        j.append_observe(np.full(live.D, 1e300))
+        poisoned = np.zeros(live.D)
+        poisoned[0] = np.inf
+        j.open()
+        j._fh.write(b"A")
+        j._fh.write(poisoned.astype("<f8").tobytes())
+        j.flush()
+        j.close()
+
+        space = StateSpace()
+        space.journal = None
+        counts = Journal(path).replay(space)
+
+        assert counts["aborted"] == 1, counts
+        assert counts["observations"] == 0, counts
+        assert len(space.attractors()) == 0, len(space.attractors())
+        print(f"       log refused as a whole ({counts['rejected']} unusable "
+              f"records, nothing applied)")
+
+
 def main() -> int:
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0

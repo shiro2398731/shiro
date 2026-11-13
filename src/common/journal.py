@@ -47,6 +47,10 @@ _DIM = 128
 _OBS_BYTES = _DIM * 8                      # float64 payload: exact replay, no drift
 _DIM_MARK = b"#L5J2"                       # file header, so a foreign file is refused
 
+# Same magnitude bound the checkpoint uses (persist.SAVE_MAGNITUDE_LIMIT): a
+# state this far out is the signature of a diverged run, not a memory.
+_SAVE_LIMIT = 1e6
+
 
 class Journal:
     """Append observations and recovery calls; replay them into a StateSpace.
@@ -165,14 +169,69 @@ class Journal:
                     break                          # foreign byte: stop, do not guess
         return observations, recovers
 
+    def _scan_bad(self) -> int:
+        """Count observations that must not be replayed (non-finite or absurdly large)."""
+        bad = 0
+        if not self.path.exists():
+            return 0
+        with self.path.open("rb") as f:
+            if f.read(len(_DIM_MARK)) != _DIM_MARK:
+                return 0
+            raw_dim = f.read(4)
+            if len(raw_dim) < 4:
+                return 0
+            dim = struct.unpack("<I", raw_dim)[0]
+            if dim != self.dim:
+                return 0
+            obs_bytes = dim * 8
+            while True:
+                kind = f.read(1)
+                if not kind:
+                    break
+                if kind == OBS:
+                    buf = f.read(obs_bytes)
+                    if len(buf) < obs_bytes:
+                        break
+                    x = np.frombuffer(buf, dtype="<f8").astype(float)
+                    if not np.isfinite(x).all() or float(np.abs(x).max()) > _SAVE_LIMIT:
+                        bad += 1
+                elif kind == REC:
+                    if len(f.read(8)) < 8:
+                        break
+                elif kind == FOLD:
+                    raw = f.read(4)
+                    if len(raw) < 4:
+                        break
+                    f.read(4 * struct.unpack("<I", raw)[0])
+                else:
+                    break
+        return bad
+
     def replay(self, space: "StateSpace") -> dict[str, int]:
-        """Apply the journal to `space` in order. Returns counts."""
+        """Apply the journal to `space` in order. Returns counts.
+
+        Fail closed: **one unusable record voids the whole log.**
+
+        Measured 2026-11-13: the WAL from the 11-08 runaway was replayed onto a
+        healthy archive. The absurd records (~1e306) were filtered, but the
+        *moderately* wrong ones from the same diverged run were accepted, and her
+        archive ended up with 31 regions that no coherent history produced (338
+        instead of 307). A log whose state sequence is already wrong cannot be
+        repaired record by record -- replaying the survivors rebuilds a body that
+        never existed. So: nothing is applied, and the caller is told.
+        """
+        bad = self._scan_bad()
+        if bad:
+            return {"observations": 0, "recovers": 0, "folds": 0,
+                    "rejected": int(bad), "aborted": 1,
+                    "available": int(bad)}
         observations, recovers = self.read_entries()
         # Interleaving matters only through total_steps, which record() advances
         # and recover() reads for its seed. Both lists are positionally aligned
         # because the writer appended in the same order the caller produced them.
         # To keep that alignment we re-read the stream once, in order.
         applied_obs = applied_rec = applied_fold = 0
+        rejected_obs = 0
         with self.path.open("rb") as f:
             f.read(len(_DIM_MARK) + 4)
             obs_bytes = self.dim * 8
@@ -184,7 +243,18 @@ class Journal:
                     buf = f.read(obs_bytes)
                     if len(buf) < obs_bytes:
                         break
-                    space.record(np.frombuffer(buf, dtype="<f8").astype(float))
+                    x = np.frombuffer(buf, dtype="<f8").astype(float)
+                    # Refuse on replay what the checkpoint already refuses to
+                    # save. 2026-11-13: a journal left over from the 11-08
+                    # runaway (values ~1e306) was replayed into a healthy
+                    # archive on every start, and the resulting region made the
+                    # next gradient blow up -- P2 then died on "non-finite
+                    # observation". The archive itself was fine; the log was
+                    # the poison.
+                    if not np.isfinite(x).all() or float(np.abs(x).max()) > _SAVE_LIMIT:
+                        rejected_obs += 1
+                        continue
+                    space.record(x)
                     applied_obs += 1
                 elif kind == REC:
                     buf = f.read(8)
@@ -206,7 +276,8 @@ class Journal:
                 else:
                     break
         return {"observations": applied_obs, "recovers": applied_rec,
-                "folds": applied_fold, "available": len(observations) + len(recovers)}
+                "folds": applied_fold, "rejected": rejected_obs,
+                "available": len(observations) + len(recovers)}
 
     # ---------- compaction ----------
 
