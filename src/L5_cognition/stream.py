@@ -315,12 +315,16 @@ class Stream:
             # A state the model has never seen produces no prediction, and no
             # prediction produces no error: counting that as a miss would make
             # the gain read "exploration" as "being wrong about myself".
-            prev, self._last_symbol = self._last_symbol, node
+            # Reference tables are keyed by uid, not by position: a merge or a
+            # fold shifts every later index, and then "the region I was in" would
+            # silently mean a different region.
+            _cur_uid = int(self.landscape.state_space.attractors()[node].uid)
+            prev, self._last_symbol = self._last_symbol, _cur_uid
             if prev is not None:
                 predicted = self.self_model.predict(prev)
                 if predicted is not None:
-                    self.self_gain.observe(predicted == node)
-                self.self_model.observe(prev, node)
+                    self.self_gain.observe(predicted == _cur_uid)
+                self.self_model.observe(prev, _cur_uid)
 
         # L3: which attractors the current state co-activates.
         # Read-only: it does not modify the state space or the graph.
@@ -414,7 +418,9 @@ class Stream:
         # published, and the context was measured above, in the same step.
         aid = self.detector.current_attractor
         if aid is not None and b_speed is not None and b_tension is not None:
-            self.grounding.observe(int(aid), (b_speed, b_tension))
+            _attrs = self.landscape.state_space.attractors()
+            if 0 <= int(aid) < len(_attrs):
+                self.grounding.observe(int(_attrs[int(aid)].uid), (b_speed, b_tension))
 
         # 记忆回路的结算：这一步实际到了哪里，走满预演步数后打分
         self._settle_rehearsal()
@@ -430,9 +436,10 @@ class Stream:
         自模型、广播给 L6 的 id 都存着编号，不跟着改就会**静默指到邻居身上**。
         被删掉的区域没有新编号：指代表里那一行整行丢弃并计数（不能猜它并入了谁）。
         """
-        self.grounding.reindex(remap)
-        self.self_model.reindex(remap)
-        for attr in ("_last_symbol", "_dwell_region"):
+        # grounding / self_model / _last_symbol are keyed by uid now: the uids
+        # do not move, so there is nothing to renumber. Only the structures that
+        # still store a table index need the map.
+        for attr in ("_dwell_region",):
             old_i = getattr(self, attr, None)
             if old_i is not None:
                 setattr(self, attr, remap.get(int(old_i)))
@@ -682,6 +689,11 @@ class Stream:
         """The only thing L6 receives. No vectors, no continuous quantities."""
         aid = self.detector.current_attractor
         seq = self.detector.recent_sequence(k=8)
+        # The referent table is keyed by uid, so the index must be translated
+        # before it can be asked. An index the table does not cover means no
+        # measurable referent -- "none", not a guess.
+        attrs = self.landscape.state_space.attractors()
+        i = int(aid) if aid is not None else -1
         return SymbolBundle(
             attractor_id=str(aid) if aid is not None else "none",
             transition_seq=[str(s) for s in seq],
@@ -689,5 +701,6 @@ class Stream:
             t_event=datetime.now(timezone.utc).isoformat(),
             # A label, not a number: the region's most usual position in her
             # own measured context, or "none" when that is not yet measurable.
-            referent=(self.grounding.label(int(aid)) if aid is not None else "none"),
+            referent=(self.grounding.label(int(attrs[i].uid))
+                      if 0 <= i < len(attrs) else "none"),
         )

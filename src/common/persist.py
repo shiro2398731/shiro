@@ -234,6 +234,8 @@ def build_l5_payload(stream) -> dict:
             # every region look unvisited, which is what fold_auto uses to
             # decide what she has stopped needing.
             "_last_seen_step": int(getattr(a, "_last_seen_step", 0)),
+            # Stable identity, not a position. See Attractor.uid.
+            "uid": int(getattr(a, "uid", 0)),
         }
         for a in ls.state_space.attractors()
     ]
@@ -269,6 +271,14 @@ def build_l5_payload(stream) -> dict:
         "v": stream._st.v if stream._st is not None else None,
         "step_count": stream._step_count,
         "total_steps": ls.state_space._total_steps,
+        # So a new region never inherits an old number after a restart.
+        "next_uid": int(getattr(ls.state_space, "_next_uid", 1)),
+        # Which id the reference tables (grounding, self-model) are keyed by.
+        # Absent means an older checkpoint keyed by table index, and the loader
+        # converts it -- indices shift when a region is removed, uids do not,
+        # and silently reinterpreting old keys as uids would attach her statistics
+        # to the wrong regions.
+        "symbol_ids": "uid",
         "global_scale": ls.state_space.global_scale,
         "recent": list(ls.state_space._recent),
     }
@@ -323,6 +333,38 @@ def load_l5(stream, name: str = "l5.pkl") -> bool:
         payload = pickle.load(f)
     apply_l5_payload(stream, payload)
     return True
+
+def _index_keyed_to_uid(table: dict, attrs) -> dict:
+    """Convert a {index: ...} table written before uids existed to {uid: ...}."""
+    out = {}
+    for k, v in (table or {}).items():
+        try:
+            i = int(k)
+        except (TypeError, ValueError):
+            continue
+        if not (0 <= i < len(attrs)):
+            continue                      # the region is gone; drop the row
+        out[str(int(attrs[i].uid))] = v
+    return out
+
+
+def _migrate_symbol_tables(gr: dict, sm: dict, attrs) -> None:
+    """Rewrite index-keyed reference tables in place. See `symbol_ids`."""
+    if gr:
+        gr["counts"] = _index_keyed_to_uid(gr.get("counts") or {}, attrs)
+    if sm:
+        rows = {}
+        for k, row in (sm.get("counts") or {}).items():
+            try:
+                i = int(k)
+            except (TypeError, ValueError):
+                continue
+            if not (0 <= i < len(attrs)):
+                continue
+            rows[str(int(attrs[i].uid))] = _index_keyed_to_uid(row or {}, attrs)
+        sm["counts"] = rows
+        sm["seen"] = _index_keyed_to_uid(sm.get("seen") or {}, attrs)
+
 
 def apply_l5_payload(stream, payload: dict) -> None:
     """Restore a stream from plain payload data (see build_l5_payload).
@@ -381,6 +423,9 @@ def apply_l5_payload(stream, payload: dict) -> None:
         # When she was last here. 0 = unknown (legacy record); fold_auto treats
         # unknown as "cannot be shown to be overdue" rather than as "long ago".
         a._last_seen_step = int(d.get("_last_seen_step", 0))
+        # Legacy records have no uid; 0 means "assign below", after the whole
+        # table is built (the number depends on the order of this loop).
+        a.uid = int(d.get("uid", 0) or 0)
         # Members must keep their bounded buffer. An earlier version passed
         # list(...) into the constructor; because the field had been assigned
         # explicitly it silently became an unbounded list, so every load
@@ -392,6 +437,16 @@ def apply_l5_payload(stream, payload: dict) -> None:
             maxlen=MEMBER_BUFFER,
         )
         attrs.append(a)
+    # Fill in uids for records that predate them, and never hand out a number
+    # that is already in use: max(uid) and the stored counter decide what is
+    # next.
+    _next = int(payload.get("next_uid", 0) or 0)
+    for _a in attrs:
+        if int(_a.uid) <= 0:
+            _a.uid = _next if _next > 0 else 1
+            _next = int(_a.uid) + 1
+        _next = max(_next, int(_a.uid) + 1)
+    ls.state_space._next_uid = max(_next, 1)
     ls.state_space._attractors = attrs
     # Folded summaries. Absent from older checkpoints (nothing had been folded
     # yet when the field was introduced), so a missing key means "none", not
@@ -423,6 +478,10 @@ def apply_l5_payload(stream, payload: dict) -> None:
     # a fresh model is the honest starting point for those, since the counts
     # it would need were never recorded.
     sm = payload.get("self_model")
+    gr = payload.get("grounding")
+    if payload.get("symbol_ids") != "uid":
+        _migrate_symbol_tables(gr if isinstance(gr, dict) else {},
+                               sm if isinstance(sm, dict) else {}, attrs)
     if sm is not None:
         from src.L5_cognition.self_model import OnlineSelfModel
         stream.self_model = OnlineSelfModel.from_dict(sm)
@@ -436,7 +495,6 @@ def apply_l5_payload(stream, payload: dict) -> None:
 
     # L6 grounding. Missing in older checkpoints: every symbol starts as
     # "none", which is the honest state for a table that was never measured.
-    gr = payload.get("grounding")
     if gr is not None:
         from src.L5_cognition.grounding import GroundingTable
         stream.grounding = GroundingTable.from_dict(gr)

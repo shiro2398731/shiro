@@ -255,37 +255,6 @@ class GroundingTable:
             return "none"
         return "b" + "b".join(str(int(x)) for x in c)
 
-    def reindex(self, remap: dict) -> int:
-        """Renumber symbol keys with old -> new; rows of removed symbols are dropped.
-
-        Region ids are positional, so a merge or a removal upstream silently
-        changes what a stored key means. Returns how many observations were
-        dropped (a merged region's counts cannot be attributed, and inventing
-        an attribution would be worse than losing them).
-        """
-        new_counts: dict[int, dict] = {}
-        dropped = 0
-        for s, row in self.counts.items():
-            new_s = remap.get(int(s))
-            if new_s is None:
-                dropped += sum(int(k) for k in row.values())
-                continue
-            tgt = new_counts.setdefault(int(new_s), {})
-            for c, k in row.items():
-                tgt[c] = tgt.get(c, 0) + int(k)
-
-        self.counts = new_counts
-        self.symbol_totals = {}
-        self.context_totals = {}
-        self.total = 0
-        for s, row in new_counts.items():
-            for c, k in row.items():
-                self.symbol_totals[s] = self.symbol_totals.get(s, 0) + k
-                self.context_totals[c] = self.context_totals.get(c, 0) + k
-                self.total += k
-        self.dropped_by_remap = int(getattr(self, "dropped_by_remap", 0)) + int(dropped)
-        return int(dropped)
-
     def coverage(self) -> float:
         """Share of symbols that have been observed at all."""
         if not self.symbol_totals:

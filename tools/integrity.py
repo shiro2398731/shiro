@@ -59,7 +59,28 @@ def check(stream, journal_path: str | None = "data/journal/l5.wal") -> list[str]
         if not (0 <= v < n):
             problems.append(f"{name}={v} outside [0, {n})")
 
-    # 1. every stored region id
+    # 1. every stored region id -- and there are two kinds now
+    #
+    #   uids     grounding / self-model / _last_symbol.  A name, stable across
+    #            merges and restarts. Legal values are the live uids, which are
+    #            NOT bounded by the region count (uid 400 of 300 regions is fine,
+    #            that just means 100 regions were folded before it).
+    #   indices  graph edges, detector.current_attractor, _dwell_region.
+    #            Positions: legal values are [0, n).
+    #
+    # Checking a uid against the count (or an index against the uid set) would
+    # report nonsense; keeping the two apart is the whole point of the change.
+    alive = space.alive_uids()
+
+    def _uid(name: str, value) -> None:
+        try:
+            v = int(value)
+        except (TypeError, ValueError):
+            problems.append(f"{name}: not an integer ({value!r})")
+            return
+        if v not in alive:
+            problems.append(f"{name}={v} is not a live uid")
+
     for e in stream.graph.edges():
         _idx("graph.edge.a", e.a)
         _idx("graph.edge.b", e.b)
@@ -68,20 +89,29 @@ def check(stream, journal_path: str | None = "data/journal/l5.wal") -> list[str]
         _idx("graph._last_node", last_node)
 
     for s in stream.grounding.counts:
-        _idx("grounding.symbol", s)
+        _uid("grounding.symbol", s)
     for s in stream.grounding.symbol_totals:
-        _idx("grounding.symbol_totals", s)
+        _uid("grounding.symbol_totals", s)
     for s, row in stream.self_model._counts.items():
-        _idx("self_model.symbol", s)
+        _uid("self_model.symbol", s)
         for t in row:
-            _idx("self_model.target", t)
+            _uid("self_model.target", t)
     if stream._last_symbol is not None:
-        _idx("stream._last_symbol", stream._last_symbol)
+        _uid("stream._last_symbol", stream._last_symbol)
     if getattr(stream, "_dwell_region", None) is not None:
         _idx("stream._dwell_region", stream._dwell_region)
     for (a, b) in getattr(stream.identity, "_appear", {}):
         _idx("identity.appear.a", a)
         _idx("identity.appear.b", b)
+
+    # Every region must carry a distinct, positive name.
+    uids = [int(a.uid) for a in attrs]
+    if len(set(uids)) != len(uids):
+        problems.append("two regions share a uid")
+    if any(u <= 0 for u in uids):
+        problems.append("a region has no uid (0)")
+    if int(getattr(space, "_next_uid", 1)) <= max(uids or [0]):
+        problems.append("next_uid does not exceed the largest live uid (a name could be reused)")
 
     # 2. numbers
     for i, a in enumerate(attrs):

@@ -86,33 +86,37 @@ def test_graph_edges_follow_a_middle_removal() -> None:
 # 3. 指代表 / 自模型跟着走，被删掉的整行丢弃并计数
 # ══════════════════════════════════════════════════════════════════════════════
 
-def test_grounding_keys_follow_the_table() -> None:
+def test_reference_tables_are_keyed_by_uid_not_by_position() -> None:
+    """The property the whole change exists for: removing a region does not
+    rename the others.
+
+    Before uids, the grounding table and the self-model were keyed by table index,
+    so removing one region shifted every later key and the statistics silently
+    moved to a different region. Now the keys are uids: a surviving region keeps
+    its number across a structural change, and only the removed one disappears.
+    """
+    ss = _space(6)
+    for i, a in enumerate(ss.attractors()):
+        a.uid = i + 1
+    ss._next_uid = 7
+
     t = GroundingTable()
-    for _ in range(3):
-        t.observe(1, (0, 0))              # this region will be removed
-    for _ in range(5):
-        t.observe(2, (1, 0))
-    for _ in range(4):
-        t.observe(3, (2, 0))
-
-    dropped = t.reindex({0: 0, 2: 1, 3: 2})
-    assert dropped == 3, dropped
-    assert sorted(t.counts) == [1, 2], sorted(t.counts)
-    assert t.symbol_totals == {1: 5, 2: 4}, t.symbol_totals
-    assert t.total == 9, t.total
-    assert t.label(1) == "b1b0" and t.label(2) == "b2b0"
-    print(f"       3-observation row dropped, keys now {sorted(t.counts)}")
-
-
-def test_self_model_keys_follow_the_table() -> None:
+    for a in ss.attractors():
+        t.observe(int(a.uid), (0, 0))
     m = OnlineSelfModel()
-    for _ in range(4):
-        m.observe(1, 2)
-        m.observe(2, 3)
-    m.reindex({0: 0, 2: 1, 3: 2})
-    assert sorted(m._counts) == [1], sorted(m._counts)
-    assert m.predict(1) == 2, m.predict(1)
-    print(f"       self-model keys now {sorted(m._counts)}")
+    for a, b in zip(ss.attractors(), ss.attractors()[1:]):
+        m.observe(int(a.uid), int(b.uid))
+
+    kept_uids = {int(a.uid) for a in ss.attractors()}
+    ss._attractors[2].amp = 1e-12          # will fall below min_amp
+    ss.recover()
+    alive = ss.alive_uids()
+    assert alive == kept_uids - {3}, (alive, kept_uids)
+
+    # nothing in either table had to be rewritten: uids do not move
+    assert set(t.counts) == kept_uids
+    assert set(m._counts) == kept_uids - {6}      # the last pair's source
+    print(f"       removed uid 3; surviving keys unchanged: {sorted(alive)}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -143,17 +147,24 @@ def test_a_live_stream_leaves_no_dangling_index() -> None:
         st.step()
 
     n = len(space.attractors())
+    uids = space.alive_uids()
+    # Two conventions live here, on purpose:
+    #   * reference tables (grounding, self-model, _last_symbol) are keyed by uid;
+    #   * the graph and the detector still use table indices.
     # The count need not fall: forty more steps also create regions. What must
-    # hold is that every stored index still points inside the current table.
-    assert all(0 <= s < n for s in st.grounding.counts), sorted(st.grounding.counts)[-3:]
-    assert all(0 <= s < n for s in st.self_model._counts), sorted(st.self_model._counts)[-3:]
-    assert st._last_symbol is None or 0 <= int(st._last_symbol) < n
+    # hold is that nothing points at a region that is gone.
+    assert set(st.grounding.counts) <= uids, sorted(set(st.grounding.counts) - uids)
+    assert set(st.self_model._counts) <= uids, sorted(set(st.self_model._counts) - uids)
+    for row in st.self_model._counts.values():
+        assert set(row) <= uids, sorted(set(row) - uids)
+    assert st._last_symbol is None or int(st._last_symbol) in uids
     cur = st.detector.current_attractor
     assert cur is None or 0 <= int(cur) < n
     assert all(e.a < n and e.b < n for e in st.graph.edges())
     dropped_after = int(getattr(st.grounding, "dropped_by_remap", 0))
-    print(f"       regions {n_before} -> {n}; every stored index < {n}; "
-          f"grounding rows dropped by remap: {dropped_after - dropped_before}")
+    print(f"       regions {n_before} -> {n}; every uid-keyed table inside "
+          f"{len(uids)} live uids; graph/detector inside {n} indices; "
+          f"rows dropped: {dropped_after - dropped_before}")
 
 
 def main() -> int:

@@ -132,6 +132,24 @@ class Attractor:
     # from "not needed for a long time" needs both, and only the second one can
     # answer "has she waited longer than usual" (see fold_auto).
     _last_seen_step: int = 0
+    # Stable identity: assigned at birth, never reused, never renumbered.
+    #
+    # Why this exists
+    # ---------------
+    # The table index is positional: removing one region shifts every later one.
+    # Anything that stored an index -- the graph, the grounding table, the
+    # self-model -- then silently pointed at a different region. Measured
+    # 2026-11-13/14, the same failure appeared four times in different clothes
+    # (two numbering schemes compared against each other, a cache keyed on the
+    # count instead of the structure, ignition indices past the end of the
+    # table, and a renumbering pass that had to be added to paper over all of
+    # it).
+    #
+    # uid carries no meaning and must never enter a computation: it is only an
+    # answer to "is this the same region as before". `tests/test_uid.py` asserts
+    # both halves -- relabelling uids changes no observable, and no code path
+    # does arithmetic or ordering with them.
+    uid: int = 0
 
     # Compatibility: older checkpoints stored this attribute under the
     # name `_sigma_decay`. Keep the alias so existing state loads.
@@ -322,6 +340,11 @@ class StateSpace:
         # measuring per-region visit rate.
         self._total_steps: int = 0
 
+        # Next stable id handed out to a new region. Monotonic within one body
+        # and restored from the payload, so a region never gets someone else's
+        # number after a restart.
+        self._next_uid: int = 1
+
         # old index -> new index for the most recent structural change
         # (removal in recover(), merge, fold). Consumed with take_index_remap().
         #
@@ -464,6 +487,14 @@ class StateSpace:
 
     def attractors(self) -> List[Attractor]:
         return list(self._attractors)
+
+    def alive_uids(self) -> set:
+        """The set of uids currently in the table. Reference tables prune with it."""
+        return {int(a.uid) for a in self._attractors}
+
+    def uid_to_index(self) -> dict:
+        """uid -> current table index. For the places that still need an index."""
+        return {int(a.uid): i for i, a in enumerate(self._attractors)}
 
     # Compatibility alias.
     def traces(self) -> List[Attractor]:
@@ -772,6 +803,8 @@ class StateSpace:
         a._assigned = 1
         a._born_step = int(self._total_steps)
         a._last_seen_step = a._born_step
+        a.uid = int(self._next_uid)
+        self._next_uid = int(self._next_uid) + 1
         self._attractors.append(a)
         self._invalidate_scale()
 

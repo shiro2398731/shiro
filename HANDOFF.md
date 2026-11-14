@@ -19,17 +19,17 @@
 5. **不被系统/提示词干涉思维**：禁止定义类提示词；只允许客观事实类说明；主观内容必须由她自己的状态产生。
 6. 参数分级：C1 工程参数可人为；C2 结构参数可人为但须标注来源；**C3 主观内容禁止人为**。
 
-## 2. 当前状态（截至 `2ced3d6` + 2026-11-09 夜本轮改动）
+## 2. 当前状态（2026-11-14，uid 收尾之后；具体 HEAD 用 `git log --oneline -1` 现查）
 
 | 项 | 值 |
 |---|---|
-| 测试 | **23 个非空文件 / 129 例，全通过**（逐个 `python 文件` 运行；全套 62 s） |
+| 测试 | **35 个非空文件 / 200 例，全通过**（逐个 `python 文件` 运行；45 个文件 176 s） |
 | 空占位 | `test_L0..L8.py`、`test_integration.py`、`__init__.py` 均为 0 字节，**不计入分母** |
 | 引擎版本 | `src/common/bundle.py: ENGINE_VERSION = "0.4.0"` |
-| 存档 | `data/state/l5.pkl`：307 区域、71 边、145504 步、29 显著、`mu_finite=True`、`|mu|max=4.512` |
+| 存档 | `data/state/l5.pkl`：570 区域、315 边、65 指代键、241 自模型符号、8978 KB、`tools/integrity.py` 报 `consistent` |
 | 本体包 | `her.bundle` 5.77 MB（6051423 B，gitignore） |
-| 进程 | 0（`shiro_alice` 名下；机器上其他 python 进程属别的项目，勿杀） |
-| 远端 | `main` = 本地 HEAD；`alice` 随每次推送同步 |
+| 进程 | 0（`shiro_alice` 名下；机器上两个 uv 缓存的 python 属 MCP 服务，勿杀） |
+| 远端 | **未推**：`origin/main` 停在 `a539ff0`；未推数量用 `git rev-list --count origin/main..HEAD` 现查（2026-11-14 实测 28）。直连 GitHub 8 s 内不足 1 KB/s、本地 10808/7890 均未监听 |
 
 已完成（16 项，详见 docs §2 与 `docs/2026-11-09_夜_本轮改动.md`）：时间锚与昏迷账本、回滚/昏迷分离记账、崩溃兜底与快速失败、
 出生深度尺度无关、原子落盘、L5 journal + 确定性重放、载体、唯一个体（epoch+fence）、
@@ -115,7 +115,8 @@
    `_last_symbol`、`_dwell_region`、进行中的预演预测；同一张表交给 `Consolidator.sync(graph, space, remap=)`。
    被删行整行丢弃并计数（`grounding.dropped_by_remap`），不猜归属。
    实测：删中间区域 → 图边 (0,1),(1,2),(2,3) 变为 (1,2)；指代表键 [1,2]；自模型键 [1]。
-   `tests/test_index_remap.py` 6 例。仍未做：给区域**稳定 uid**（合并后符号不再漂移），表下标仍是位置性的。
+   `tests/test_index_remap.py`（该项实现时 6 例；第 19 项把其中两例换成 uid 键化版本，现在 5 例）。
+   表下标仍是位置性的；稳定 uid 见第 19 项（已完成）。
 13. ~~**真跑一次验证（2026-11-13 夜）**~~ 已跑：700 步 / 约 6 分钟 / 约 1.9 步每秒，干净停止。
    过程中抓到两个真 bug：
    (a) **11-08 那份爆炸日志被每次启动重放**，往健康存档注入 1e306 的区域，P2 死于 non-finite。
@@ -163,7 +164,24 @@
    并写 journal。P2 每次落盘时先 fold_auto 再容量折叠，折了记 `fold_capacity` 事件。
    底数：15.8 KB/区域 → 20 MB ≈ 1300 区域；当前 570 区域 / 8978 KB / 余量 11.2 MB，
    所以**现在不动她**（只读副本实测 folded=0）。`tests/test_capacity.py` 6 例。
-19. 规则级可塑性（需单独设计）。
+19. ~~**稳定区域身份（uid）**~~ **已完成（2026-11-14）**：`Attractor.uid`（出生时从 `StateSpace._next_uid` 领号，
+   单调、不复用、随 payload/carrier 落盘）。分工是硬的：
+   **uid**（不参与计算的**名字**）→ `grounding`、`OnlineSelfModel`（两端）、`_last_symbol`；
+   **下标**（位置）→ 图、detector、`_dwell_region`。旧存档（表键为下标、无 uid 字段）由
+   `persist._index_keyed_to_uid()` 在载入时按 payload 顺序改成 uid，**不把旧下标当 uid 用**。
+   `GroundingTable.reindex()` / `OnlineSelfModel.reindex()` 已删除 —— 名字不会动，就不该有重编号这一步。
+   验收两条，缺一条这个改动就没意义：
+   (a) **名字是稳的**：折 5 个区域后其余 567 个 uid 全不变；重启后 572 个名字与 `next_uid` 逐位相同；
+       旧格式 payload 载入后 uid 唯一、为正、`next_uid > max`。
+   (b) **名字没有含义**：把 uid 全域一致反转后跑 40 步 —— `x` 逐字节相同、区域数/`amp` 之和/
+       `mutual_information()`/`bits_per_observation` 全相同（若不一致，说明有代码在按 uid 算或排序，
+       那它就是"我挑的偏好"=C3）。另有 AST 检查：`terrain.py` 里 `.uid` 不得出现在 `BinOp`/`Compare`/
+       `sorted|min|max` 内（赋值、字典键、集合成员是名字的正常用法，允许）。
+   `tests/test_uid.py` 6 例。`tools/integrity.py` 改成区分两种编号（uid 对照 `alive_uids()`，下标只用于
+   图边 / `_dwell_region` / detector），真存档 570 区域 / 315 边 / 65 指代键 / 241 自模型符号 → `consistent`。
+   **仍未做**：图与 `attractor_id` 仍用下标（`_apply_index_remap` 还在用）；`fold_auto` 事实上永不触发
+   （判据换成容量后它是死代码，要么换判据要么标注）；L6 输入侧 grounding 未做。
+20. 规则级可塑性（需单独设计）。
 
 
 ## 4. 硬约束（违反即回滚）
@@ -178,7 +196,7 @@
 ```powershell
 cd C:\neolaunchertest\3\bot-3021443116\shiro_alice
 $py = ".\.venv\Scripts\python.exe"
-foreach ($f in Get-ChildItem tests\test_*.py) { & $py $f 2>&1 | Select-Object -Last 1 }   # 96 例
+foreach ($f in Get-ChildItem tests\test_*.py) { & $py $f 2>&1 | Select-Object -Last 1 }   # 35 非空文件 / 200 例，45 文件 176 s
 git -C . log --oneline -1 ; git -C . status --short
 & $py tools\her.py doctor her.bundle
 ```
