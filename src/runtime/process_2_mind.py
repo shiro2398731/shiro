@@ -352,6 +352,24 @@ def main() -> int:
                 # 分布，以及"距离上次访问多久"。折叠事件进 journal，可重放。
                 # 放在快照之前：折叠效果先落进检查点，再截断日志，保持一致。
                 _folded = stream.landscape.state_space.fold_auto()
+                # 容量纪律：判据是「载体还带得动吗」，不是「她还需要它吗」。
+                # 实测（2026-11-14）：fold_auto 在她一直活动时永远返回 0，
+                # 而区域一小时从 307 长到 570、每区域约 15.8 KB —— 20 MB 只够约 1300 个。
+                _space = stream.landscape.state_space
+
+                def _carrier_bytes(_st=stream):
+                    import pickle as _pickle
+                    return len(_pickle.dumps(persist.build_l5_payload(_st),
+                                             protocol=_pickle.HIGHEST_PROTOCOL))
+
+                _capacity_folded = _space.fold_to_capacity(_carrier_bytes)
+                if _capacity_folded:
+                    observer.event("fold_capacity", {
+                        "removed": int(_capacity_folded),
+                        "live": len(_space.attractors()),
+                        "carrier_kb": round(_carrier_bytes() / 1024, 1),
+                    })
+                _folded += _capacity_folded
                 if _folded:
                     observer.event("fold", {"removed": int(_folded),
                                    "live": len(stream.landscape.state_space.attractors())})

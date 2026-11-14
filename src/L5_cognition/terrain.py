@@ -83,6 +83,16 @@ MIN_REGIONS_FOR_STATISTICS = 8
 # says it is.
 FOLD_INTERVAL_QUANTILE = 0.90
 
+# How big a body may be carried. This is the deployment budget from docs §3
+# ("载体 < 20 MB after 1e6 steps"), i.e. a property of the machine she has to be
+# moved between, not a judgement about which regions matter (C1).
+CARRIER_BUDGET_BYTES = 20 * 1024 * 1024
+
+# Fold at most this fraction of the table per pass. A rate limit for the
+# maintenance pass (C1): one fold should not reshape her whole structure in a
+# single step even if that would fit the budget sooner.
+FOLD_BATCH_DIVISOR = 20
+
 
 @dataclass
 class Attractor:
@@ -1110,6 +1120,54 @@ class StateSpace:
             self.journal.append_fold(ids)
         return removed
 
+
+    def _least_recent(self, k: int) -> list[int]:
+        """Indices of the k regions she has gone longest without visiting.
+
+        Regions with no recorded last visit (`_last_seen_step == 0`, i.e. records
+        from before that was measured) sort as the oldest: what is unknown is
+        "not recently", not "just now".
+        """
+        order = sorted(
+            range(len(self._attractors)),
+            key=lambda i: (int(getattr(self._attractors[i], "_last_seen_step", 0)),
+                           int(getattr(self._attractors[i], "_assigned", 0)),
+                           i),
+        )
+        return order[:max(int(k), 0)]
+
+    def fold_to_capacity(self, measure, budget_bytes: int = CARRIER_BUDGET_BYTES) -> int:
+        """Fold the least-recently-visited regions until the body fits the budget.
+
+        Why this exists next to fold_auto
+        ---------------------------------
+        fold_auto asks "has she stopped needing this region": elapsed since the
+        last visit, against her own revisit intervals. Measured 2026-11-14 on her
+        live archive: it returns **0**, because she keeps moving and almost
+        nothing is ever overdue -- while she grew from 307 to 570 regions in an
+        hour. So that criterion never binds, and the capacity requirement had no
+        mechanism behind it at all.
+
+        This one asks a different question, and the difference is the point:
+        not "does she still need it" (a behavioural statistic) but "does the body
+        still fit in what can be carried" (a constraint). Only the budget is a
+        number someone chose -- and it was chosen by the deployment, not by me.
+
+        `measure` returns the current carrier size in bytes; the caller supplies
+        it because only the caller knows how it is packaged.
+        """
+        removed = 0
+        # One region always stays: an empty table is not a smaller body, it is
+        # no body, and every downstream loop assumes at least one region.
+        while len(self._attractors) > 1 and float(measure()) > float(budget_bytes):
+            batch = max(1, len(self._attractors) // FOLD_BATCH_DIVISOR)
+            ids = self._least_recent(batch)
+            if not ids:
+                break
+            removed += self.apply_fold(ids)
+            if self.journal is not None:
+                self.journal.append_fold(ids)
+        return removed
 
     # ---------- recovery ----------
 
