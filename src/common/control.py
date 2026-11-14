@@ -60,9 +60,24 @@ def send(cmd: str, root: Path | str = DEFAULT_ROOT, **args: Any) -> str:
     return cid
 
 
-def poll(root: Path | str = DEFAULT_ROOT) -> Optional[dict]:
-    """Return the oldest pending command and mark it as taken."""
+def poll(root: Path | str = DEFAULT_ROOT,
+         not_before: Optional[str] = None) -> Optional[dict]:
+    """Return the oldest pending command that is meant for this process.
+
+    `not_before` (an ISO timestamp, normally this process's own boot time) drops
+    commands issued before it started. Without it a *stale* command kills the
+    next boot: measured 2026-11-14, a `stop` written while she was already down
+    was still sitting in the inbox, the next P1 read it as its first instruction,
+    retired the fresh epoch, and every sibling fenced itself a second later. The
+    log of that looked exactly like an orderly shutdown.
+    """
     inbox, _, _ = _dirs(root)
+    cutoff = None
+    if not_before:
+        try:
+            cutoff = datetime.fromisoformat(str(not_before).replace("Z", "+00:00"))
+        except ValueError:
+            cutoff = None
     for p in sorted(inbox.glob("*.json")):
         try:
             with p.open(encoding="utf-8") as f:
@@ -70,6 +85,15 @@ def poll(root: Path | str = DEFAULT_ROOT) -> Optional[dict]:
         except Exception:
             p.unlink(missing_ok=True)
             continue
+        if cutoff is not None:
+            issued = payload.get("issued_at")
+            try:
+                issued_dt = datetime.fromisoformat(str(issued).replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                issued_dt = None
+            if issued_dt is not None and issued_dt < cutoff:
+                p.unlink(missing_ok=True)      # stale: belonged to a previous life
+                continue
         if payload.get("cmd") not in KNOWN:
             reply(payload.get("id", p.stem), ok=False, error=f"unknown command {payload.get('cmd')!r}", root=root)
             p.unlink(missing_ok=True)

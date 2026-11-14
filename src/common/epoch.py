@@ -191,6 +191,33 @@ def heartbeat(epoch: int, ttl_s: float = DEFAULT_TTL_S,
     return True
 
 
+def adoptable(since_mtime: float = 0.0,
+              directory: Path | str = DEFAULT_DIR) -> Optional[Epoch]:
+    """The epoch written by this boot, or None.
+
+    A sibling must adopt the epoch *this* boot created, and nothing else. The
+    old test was "epoch > 0 and the ledger was touched after we booted", which a
+    dying holder defeats: its `retire()` is itself a fresh write, so a retired
+    ledger looks freshly written. Measured 2026-11-14: P3 adopted epoch 13 from
+    the previous run's farewell, the real claim then moved to 14, and P3 fenced
+    itself within a second -- three boots in a row, and its log looked like an
+    orderly shutdown.
+
+    Requirements, all of them:
+      * a live holder (a retired ledger has holder=None: it is a farewell),
+      * not retired,
+      * written at or after `since_mtime` (the caller's boot time minus a margin).
+    """
+    st = load(directory)
+    if int(st.epoch) <= 0:
+        return None
+    if st.retired or st.holder is None:
+        return None
+    if ledger_mtime(directory) < float(since_mtime):
+        return None
+    return st
+
+
 def is_current(epoch: int, directory: Path | str = DEFAULT_DIR) -> bool:
     """The fence. Cheap enough to call every tick."""
     state = load(directory)

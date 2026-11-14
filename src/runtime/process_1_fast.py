@@ -1258,6 +1258,10 @@ def main() -> int:
     last_published_phase = None    # 只在相位变化时发布，不按时间发布
     last_published_l2_updates = -1
     last_epoch_check = 0.0
+    # Control commands issued before this moment belong to a previous life.
+    # A stale `stop` in the inbox would otherwise be this process's first
+    # instruction (measured 2026-11-14: it retired a fresh epoch on arrival).
+    _control_since = datetime.now(timezone.utc).isoformat()
     _last_fed = None               # 上一次送入 L2 的周期统计对象（去重，避免一个周期内重复入滑窗）
     try:
         while running["flag"]:
@@ -1389,7 +1393,7 @@ def main() -> int:
                     print("[P1] fenced: epoch moved, stopping instead of acting")
                     break
                 # control channel: a file, not a terminal (src/common/control.py)
-                _cmd = control_mod.poll()
+                _cmd = control_mod.poll(not_before=_control_since)
                 if _cmd is not None:
                     _name = _cmd.get("cmd")
                     if _name == "stop":

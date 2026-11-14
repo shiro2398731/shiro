@@ -105,6 +105,12 @@ def status(timeout_s: float = 8.0) -> int:
 
 
 def stop(timeout_s: float = 20.0) -> int:
+    if not _running():
+        # Nothing to stop. Writing a command here would leave it in the inbox
+        # for the *next* boot to execute on arrival -- which is exactly how a
+        # stale stop killed a fresh run on 2026-11-14.
+        print("[headless] nothing running")
+        return 0
     cid = control.send("stop")
     reply = control.wait_reply(cid, timeout_s=timeout_s)
     if reply is None:

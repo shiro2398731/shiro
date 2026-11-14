@@ -64,6 +64,33 @@ def test_done_history_is_bounded() -> None:
         assert len(left) <= 100, len(left)
 
 
+def test_a_command_issued_before_this_boot_is_discarded() -> None:
+    """A stale `stop` must not become the next boot's first instruction.
+
+    2026-11-14: a stop written while she was already down stayed in the inbox.
+    The next P1 read it before anything else, retired the fresh epoch, and every
+    sibling fenced themselves a second later -- in the log it looked like an
+    orderly shutdown.
+    """
+    import time
+    from datetime import datetime, timezone
+
+    with tempfile.TemporaryDirectory() as d:
+        stale = control.send("stop", root=d)
+        time.sleep(0.02)
+        cutoff = datetime.now(timezone.utc).isoformat()
+
+        assert control.poll(root=d, not_before=cutoff) is None, "stale command handed out"
+        assert not (pathlib.Path(d) / "inbox" / f"{stale}.json").exists(), \
+            "stale command left in the inbox"
+
+        fresh = control.send("ping", root=d)
+        got = control.poll(root=d, not_before=cutoff)
+        assert got is not None and got["cmd"] == "ping", got
+        assert got["id"] == fresh
+        print("        stale stop discarded; a fresh ping still delivered")
+
+
 def main() -> int:
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0

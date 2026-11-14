@@ -152,9 +152,12 @@ def main() -> int:
     my_epoch = 0
     _wait_until = _boot_at + 15.0
     while time.time() < _wait_until:
-        _st = epoch_mod.load()
-        # 只采纳本次启动之后写入的 epoch：上一轮遗留的那个属于别人。
-        if _st.epoch > 0 and epoch_mod.ledger_mtime() >= _boot_at - 2.0:
+        # 只采纳本次启动之后、且**有活持有者**的 epoch。
+        # 只看 mtime 不够：上一轮退出时写的 retire() 本身也是一次新写入，
+        # 于是一条已经退役的记录会被当成"我的"，等她真正的 epoch 落地后就自围栏
+        # （2026-11-14 实测：P3 连续三次启动即退出，日志看起来像正常关闭）。
+        _st = epoch_mod.adoptable(since_mtime=_boot_at - 2.0)
+        if _st is not None:
             my_epoch = _st.epoch
             break
         time.sleep(0.2)

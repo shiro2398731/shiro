@@ -74,6 +74,36 @@ def test_retire_allows_immediate_claim() -> None:
         assert state.holder == "b:2"
 
 
+def test_a_retired_ledger_is_never_adopted() -> None:
+    """A dying holder's farewell is a *fresh write*, so mtime alone cannot tell
+    it from a real claim.
+
+    2026-11-14: P3 adopted epoch 13 from the previous run's retire(), the real
+    claim then moved to 14, and P3 fenced itself within a second -- three boots
+    in a row, with a log that looked like an orderly shutdown.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        state, e = epoch.claim(holder="a:1", directory=d)
+        assert epoch.adoptable(since_mtime=0.0, directory=d) is not None
+        epoch.retire(e, "clean exit", directory=d)
+
+        again = epoch.load(d)
+        assert again.retired and again.holder is None
+        assert epoch.adoptable(since_mtime=0.0, directory=d) is None, \
+            "a retired ledger must never be adopted, however fresh its mtime"
+        print(f"       epoch {e} retired -> adoptable() = None")
+
+
+def test_a_live_claim_is_adopted_and_an_older_one_is_not() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        epoch.claim(holder="a:1", directory=d)
+        got = epoch.adoptable(since_mtime=time.time() - 60.0, directory=d)
+        assert got is not None and got.epoch == 1
+        assert epoch.adoptable(since_mtime=time.time() + 60.0, directory=d) is None, \
+            "a ledger written before this boot belongs to the previous run"
+        print("        live claim adopted; a ledger older than the boot is not")
+
+
 def main() -> int:
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0
