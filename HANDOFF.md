@@ -126,7 +126,13 @@
    落盘：6.4 MB / 365 区域 / |mu|max=4.512 / 130 边 / self_bits=2.2724。
    未覆盖：`dropped_by_remap=0`（没有区域被删），重编号路径仍只有单测；self_bits 从 0.86 涨到 2.27，
    只有一次运行，不能当结论。启动前备份：`data/state/l5.pkl.preverify`。
-14. 规则级可塑性（需单独设计）。
+14. ~~**M2 元认知校准**~~ **已完成（2026-11-13 下午）**：`OnlineSelfModel.distribution()/confidence()`，
+   滚动 `mean_confidence` 进 P2 快照（`self_conf`）；`tools/m2_audit.py` 出校准表与三组对照。
+   实测（1200 步 / 31 区域）：real acc 0.8964 / conf 0.6994 / ECE 0.1987；
+   shuffled acc 0.0685 / conf 0.1091 / ECE 0.0406；transferred acc 0.8692 / conf 0.4583 / ECE 0.4280。
+   结论：**她低估自己**（低把握档 conf 0.356 而 acc 0.906；高把握档 0.918 对 0.923 几乎完全校准）。
+   打乱转移后她会正确地失去把握 —— 这正是「校准好不等于知道」，故工具同时打印 accuracy 与 conf。
+15. 规则级可塑性（需单独设计）。
 
 
 ## 4. 硬约束（违反即回滚）

@@ -305,6 +305,9 @@ def main() -> int:
                     # 命中率会被"待在原地"抬高：实测 0.9390 的 0 阶基线打不过
                     # 模型的 0.9325。真正能区分的是留出/前向对数损失，见 tools/m1_audit.py。
                     "self_bits": round(stream.self_model.bits_per_observation, 4),
+                    # M2：她自己给的把握。要和 self_accuracy 并排看 ——
+                    # 校准好不等于知道（见 tools/m2_audit.py 的说明）。
+                    "self_conf": round(stream.self_model.mean_confidence, 4),
                     "self_gain": round(stream.self_gain.gain(), 4),
                     # L3
                     "edges": ss["n_edges"],

@@ -91,6 +91,11 @@ class OnlineSelfModel:
         # against 0.4813. Accuracy is dominated by dwell; bits are not.
         self.nll_bits = 0.0
         self.scored = 0
+        # M2: running mean of how sure she was, so the live snapshot can put
+        # confidence next to accuracy. Calibration itself (ECE) is computed by
+        # tools/m2_audit.py -- it needs binned history, not a single number.
+        self.conf_sum = 0.0
+        self.conf_n = 0
 
     def predict(self, state: int) -> int | None:
         row = self._counts.get(int(state))
@@ -100,6 +105,31 @@ class OnlineSelfModel:
         # here; the tie-break by id is what makes the choice reproducible.
         best = max(row.items(), key=lambda kv: (kv[1], -kv[0]))
         return int(best[0])
+
+    def distribution(self, state: int) -> dict:
+        """Predicted distribution over the next symbol, Laplace-smoothed.
+
+        `predict()` answers "what will happen"; this answers "and how sure am I".
+        The smoothing is the same constant used for the loss, so confidence and
+        loss speak about the same model (and cannot disagree by accident).
+        """
+        s = int(state)
+        row = self._counts.get(s) or {}
+        vocab = set(self._seen)
+        for n_ in row:
+            vocab.add(int(n_))
+        v = max(len(vocab), 1)
+        total = sum(float(c) for c in row.values())
+        if not row:
+            # Never seen: uniform over what she knows, which is the honest answer.
+            return {int(k): 1.0 / v for k in vocab} if vocab else {}
+        return {int(k): (float(c) + SMOOTHING) / (total + SMOOTHING * v)
+                for k, c in row.items()}
+
+    def confidence(self, state: int) -> float:
+        """Probability mass on her own choice: max of the distribution."""
+        dist = self.distribution(state)
+        return max(dist.values()) if dist else 0.0
 
     def observe(self, prev: int, nxt: int) -> None:
         p, n = int(prev), int(nxt)
@@ -111,6 +141,10 @@ class OnlineSelfModel:
         prob = (row_before.get(n, 0.0) + SMOOTHING) / (row_total + SMOOTHING * vocab)
         self.nll_bits += -math.log2(prob if prob > 0 else 1e-12)
         self.scored += 1
+        if row_before:
+            best = max(float(c) for c in row_before.values())
+            self.conf_sum += (best + SMOOTHING) / (row_total + SMOOTHING * vocab)
+            self.conf_n += 1
         # Accuracy is tracked here as well, so the model is self-contained:
         # until 2026-11-10 `hits` was only ever set by a restore, which made
         # `accuracy` read 0.0 on a model that had been predicting correctly.
@@ -134,6 +168,11 @@ class OnlineSelfModel:
     @property
     def accuracy(self) -> float:
         return self.hits / self.observations if self.observations else 0.0
+
+    @property
+    def mean_confidence(self) -> float:
+        """How sure she has been, averaged: put it next to `accuracy`."""
+        return self.conf_sum / self.conf_n if self.conf_n else 0.0
 
     @property
     def bits_per_observation(self) -> float:
