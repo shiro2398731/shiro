@@ -252,7 +252,9 @@ def main() -> int:
             got = fresh.wait(timeout=0.5)
             fresh.clear()
             if not epoch_mod.is_current(my_epoch):
-                print("[P2] fenced, stopping")
+                _led = epoch_mod.load()
+                print(f"[P2] fenced, stopping "
+                      f"(ledger epoch={_led.epoch} retired={_led.retired}; mine={my_epoch})")
                 break
 
             # 上游还没给够数据：什么也不做，等她身体先积累统计量

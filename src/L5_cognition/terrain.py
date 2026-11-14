@@ -288,6 +288,14 @@ class StateSpace:
         self._scale_cache_n: int = -1
         self._mu_cache: Optional[np.ndarray] = None
         self._mu_cache_n: int = -1
+        # Structural version. The centroid matrix used to be rebuilt only when
+        # the region *count* changed, which is unsound: removing one region and
+        # adding another in the same step keeps the count identical and leaves
+        # the matrix describing different rows. Measured 2026-11-13 (M4 audit):
+        # the workspace reported ignitions on 57 distinct indices while she had
+        # only visited 24 regions, some of the indices past the table's end.
+        self._cache_ver: int = 0
+        self._mu_cache_ver: int = -1
         self._sigma_vec: Optional[np.ndarray] = None
 
         # Per-region pull factors supplied by L4 regulation. All ones by default,
@@ -424,6 +432,7 @@ class StateSpace:
         self._scale_cache_n = -1
         self._mu_cache = None
         self._mu_cache_n = -1
+        self._cache_ver += 1
 
     def _numerical_floor(self, v: np.ndarray) -> float:
         """Numerical floor tied to the magnitude of v: sqrt(eps) * max(|v|, 1)."""
@@ -791,9 +800,10 @@ class StateSpace:
         explicitly.
         """
         n = len(self._attractors)
-        if self._mu_cache is None or self._mu_cache_n != n:
+        if self._mu_cache is None or self._mu_cache_ver != self._cache_ver:
             self._mu_cache = np.stack([a.mu for a in self._attractors])
             self._mu_cache_n = n
+            self._mu_cache_ver = self._cache_ver
             self._sigma_vec = np.array([a.sigma for a in self._attractors],
                                        dtype=float)
         return self._mu_cache

@@ -223,6 +223,13 @@ class OnlineSelfModel:
             "hits": int(self.hits),
             "nll_bits": float(self.nll_bits),
             "scored": int(self.scored),
+            # Without these two, a restart makes mean_confidence start at 0
+            # while self_gain's accuracy is a lifetime figure -- the two numbers
+            # sit side by side in the snapshot but would describe different
+            # windows. Measured 2026-11-13: self_accuracy=0.9095 next to
+            # self_conf=0.2237 on the first snapshot after a restart.
+            "conf_sum": float(self.conf_sum),
+            "conf_n": int(self.conf_n),
         }
 
     @classmethod
@@ -236,6 +243,8 @@ class OnlineSelfModel:
         m.hits = int(data.get("hits", 0))
         m.nll_bits = float(data.get("nll_bits", 0.0))
         m.scored = int(data.get("scored", 0))
+        m.conf_sum = float(data.get("conf_sum", 0.0))
+        m.conf_n = int(data.get("conf_n", 0))
         return m
 
 

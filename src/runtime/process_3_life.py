@@ -176,7 +176,9 @@ def main() -> int:
         while not stop.is_set():
             stop.wait(1.0)
             if not epoch_mod.is_current(my_epoch):
-                print("[P3] fenced, stopping")
+                _led = epoch_mod.load()
+                print(f"[P3] fenced, stopping "
+                      f"(ledger epoch={_led.epoch} retired={_led.retired}; mine={my_epoch})")
                 break
             now = time.time()
             if now - last_eval < 60:

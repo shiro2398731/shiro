@@ -45,6 +45,23 @@ import collections
 from dataclasses import dataclass
 from typing import Optional
 
+# Where in her own history of peak strengths the bar sits.
+#
+# It used to be the median, and a median split fires half the time by
+# construction -- measured 2026-11-13 (tools/m4_audit.py): 0.4975 ignitions per
+# step, and the ignited set was *wider* than the set she actually dwelt in
+# (H_ign 4.69 bits vs H_visit 3.79). That is a wide broadcast, not a bottleneck.
+#
+# A quantile of her own peak history is the same kind of number as the fold
+# threshold: nothing is chosen except which quantile, and the value comes from
+# her data. 0.90 means "the top tenth of what she has produced".
+IGNITION_QUANTILE = 0.90
+
+# How many past ignitions are kept. Buffer discipline (C1), not a criterion.
+# Before 2026-11-13 `history` was an unbounded list: at two ignitions per second
+# that is ~170k objects per day in a process meant to run for weeks.
+HISTORY_CAP = 1024
+
 import numpy as np
 
 
@@ -70,7 +87,7 @@ class GlobalWorkspace:
         """
         self._strength_hist: collections.deque = collections.deque(maxlen=history_len)
         self._current: Optional[Ignition] = None
-        self.history: list[Ignition] = []
+        self.history: collections.deque = collections.deque(maxlen=HISTORY_CAP)
 
         self._active_mu: Optional[np.ndarray] = None
         self._active_sigma: float = 0.0
@@ -133,7 +150,8 @@ class GlobalWorkspace:
         best = float(strengths[best_i])
 
         if self._strength_hist:
-            ref = float(np.median(self._strength_hist))
+            ref = float(np.quantile(np.asarray(self._strength_hist, dtype=float),
+                                    IGNITION_QUANTILE))
         else:
             ref = None
 
@@ -178,10 +196,15 @@ class GlobalWorkspace:
         return self._active_mu is not None
 
     def reference_level(self) -> Optional[float]:
-        """Median of observed peak strengths. Observation only."""
+        """The bar a peak has to clear: IGNITION_QUANTILE of her own peaks.
+
+        A quantile rather than the median: the median fires half the time by
+        construction, which cannot be a bottleneck (measured, see the constant).
+        """
         if not self._strength_hist:
             return None
-        return float(np.median(self._strength_hist))
+        return float(np.quantile(np.asarray(self._strength_hist, dtype=float),
+                                 IGNITION_QUANTILE))
 
     # Compatibility alias.
     def baseline(self) -> Optional[float]:
