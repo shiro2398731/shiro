@@ -298,15 +298,14 @@ class Stream:
                 [self.rest.value(i) for i in range(len(attrs_now))]
             )
 
-        # L3: connect consecutive attractors when the transition is direct.
-        node: Optional[int] = None
+        # L3: connect consecutive regions when the transition is direct.
         if a is not None:
-            attrs = self.landscape.state_space.attractors()
-            for i, item in enumerate(attrs):
-                if item is a:
-                    node = i
-                    break
-            self.graph.touch(node, step=self._step_count)
+            # The graph is keyed by the region's name, not by its row. A row
+            # means "wherever that region sits today", so an edge stored by row
+            # would point at a neighbour after any structural change -- and
+            # keeping it right meant renumbering every edge on every change.
+            _cur_uid = int(a.uid)
+            self.graph.touch(_cur_uid, step=self._step_count)
 
             # M1: score her prediction of this region against the region she
             # actually reached, then learn the transition. The prediction was
@@ -315,10 +314,6 @@ class Stream:
             # A state the model has never seen produces no prediction, and no
             # prediction produces no error: counting that as a miss would make
             # the gain read "exploration" as "being wrong about myself".
-            # Reference tables are keyed by uid, not by position: a merge or a
-            # fold shifts every later index, and then "the region I was in" would
-            # silently mean a different region.
-            _cur_uid = int(self.landscape.state_space.attractors()[node].uid)
             prev, self._last_symbol = self._last_symbol, _cur_uid
             if prev is not None:
                 predicted = self.self_model.predict(prev)
@@ -390,14 +385,16 @@ class Stream:
             else:
                 self.landscape.state_space.set_wall(None)
 
-        # 结构可能变了（recover 删过区域、或刚刚合并过）：先把旧->新编号取出来，
-        # 让自己身上的编号跟着改，再把同一张表交给图去做对齐。
+        # 结构可能变了（recover 删过区域、或刚刚合并过）：先把旧->新编号取出来。
+        # 存着**行号**的地方仍然需要它（detector、停留账本、预演序列）；图与指代表
+        # 存的是名字，不需要改号。
         _remap = self.landscape.state_space.take_index_remap()
         if _remap is not None:
             self._apply_index_remap(_remap)
 
-        # Attractor count may have changed through recovery or merging.
-        self.consolidator.sync(self.graph, self.landscape.state_space, remap=_remap)
+        # Attractor count may have changed through recovery or merging. The
+        # graph only has to drop the regions that are gone.
+        self.consolidator.sync(self.graph, self.landscape.state_space)
 
         # Workspace: read-only.
         self._last_ignition = self.workspace.observe(
@@ -430,15 +427,12 @@ class Stream:
     # ---------- 区域重编号 ----------
 
     def _apply_index_remap(self, remap: dict) -> None:
-        """结构变化后，把所有存着旧编号的地方一起改号。
+        """结构变化后，把还存着**行号**的地方改号。
 
-        区域编号是位置性的：删掉中间一个，后面每个都往前挪一位。图、指代表、
-        自模型、广播给 L6 的 id 都存着编号，不跟着改就会**静默指到邻居身上**。
-        被删掉的区域没有新编号：指代表里那一行整行丢弃并计数（不能猜它并入了谁）。
+        现在只剩三处存行号：detector 的当前区域、停留账本 `_dwell_region`、
+        进行中的预演序列。它们都是"表里的第几行"，本来就会随表变化，所以需要这张表。
+        图、指代表、自模型、`_last_symbol` 存的是区域的名字（uid），不动。
         """
-        # grounding / self_model / _last_symbol are keyed by uid now: the uids
-        # do not move, so there is nothing to renumber. Only the structures that
-        # still store a table index need the map.
         for attr in ("_dwell_region",):
             old_i = getattr(self, attr, None)
             if old_i is not None:

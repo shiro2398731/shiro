@@ -172,7 +172,12 @@ class Drive:
         """
         attrs = state_space.attractors()
         n = len(attrs)
-        edges = [e for e in graph.edges() if e.a < n and e.b < n]
+        # Graph nodes are uids; the numbers live in parallel arrays indexed by
+        # row. `uid_row()` is cached per structural version, so this lookup
+        # costs nothing per step, and an edge whose endpoint is gone is dropped
+        # here rather than silently reading a different region's centroid.
+        row = state_space.uid_row()
+        edges = [e for e in graph.edges() if e.a in row and e.b in row]
 
         if len(edges) < self.min_edges or n < self.min_regions:
             self._last = []
@@ -182,8 +187,13 @@ class Drive:
         # all separations in one array operation. A Python loop over edges was
         # the single largest cost in a step after potential/gradient were
         # vectorised.
-        idx_a = np.fromiter((e.a for e in edges), dtype=np.int64, count=len(edges))
-        idx_b = np.fromiter((e.b for e in edges), dtype=np.int64, count=len(edges))
+        idx_a = np.fromiter((row[e.a] for e in edges), dtype=np.int64, count=len(edges))
+        idx_b = np.fromiter((row[e.b] for e in edges), dtype=np.int64, count=len(edges))
+        # The two ends are carried separately in uid space: a Tension names two
+        # regions, and a row number would stop meaning the same region after the
+        # next structural change. (Rows are for the arrays only.)
+        uid_a = np.fromiter((e.a for e in edges), dtype=np.int64, count=len(edges))
+        uid_b = np.fromiter((e.b for e in edges), dtype=np.int64, count=len(edges))
         ws = np.fromiter((e.w for e in edges), dtype=float, count=len(edges))
 
         mus = np.stack([a.mu for a in attrs])
@@ -237,8 +247,8 @@ class Drive:
             return []
 
         order = np.argsort(-amount[keep_mask])
-        ka = idx_a[keep_mask][order]
-        kb = idx_b[keep_mask][order]
+        ka = uid_a[keep_mask][order]
+        kb = uid_b[keep_mask][order]
         kv = amount[keep_mask][order]
 
         keep = [Tension(a=int(a), b=int(b), amount=float(v))
@@ -261,14 +271,20 @@ class Drive:
             return None
 
         attrs = state_space.attractors()
-        n = len(attrs)
+        row = state_space.uid_row()
         acc = np.zeros(self.D, dtype=float)
         total = 0.0
 
         for t in ts:
-            if t.a >= n or t.b >= n:
+            # A tension names two regions by uid; an edge that survived a
+            # structural change points at a region that still exists, so a
+            # miss here means the graph is stale and the pair is skipped
+            # rather than read as some other region's centroid.
+            ia = row.get(int(t.a))
+            ib = row.get(int(t.b))
+            if ia is None or ib is None:
                 continue
-            d = attrs[t.a].mu - attrs[t.b].mu
+            d = attrs[ia].mu - attrs[ib].mu
             nd = float(np.linalg.norm(d))
             if nd <= 0:
                 continue

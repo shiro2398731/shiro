@@ -246,6 +246,10 @@ def build_l5_payload(stream) -> dict:
         # archive silently loses every summary fold() has produced.
         "folded": [dict(f) for f in getattr(ls.state_space, "_folded", [])],
         "graph": stream.graph.to_dict(),
+        # What the graph's nodes are. Absent means an older checkpoint whose
+        # nodes are table indices; the loader converts them (see
+        # `_graph_index_to_uid`). Indices shift, uids do not.
+        "graph_ids": "uid",
         # M1. Her model of her own next state, and the error it currently
         # makes. Part of the state, not of the session: without it every
         # restart begins with a self-model that has never seen her move.
@@ -366,6 +370,45 @@ def _migrate_symbol_tables(gr: dict, sm: dict, attrs) -> None:
         sm["seen"] = _index_keyed_to_uid(sm.get("seen") or {}, attrs)
 
 
+def _graph_index_to_uid(d: dict, attrs) -> None:
+    """Rewrite a graph payload whose nodes are old table indices as uids.
+
+    Only the endpoints change; `w_ab` is the weight leaving the stored `a`, so
+    when a relabelling puts the two uids in the other order the two directions
+    have to be swapped with them -- otherwise a -> b silently becomes b -> a.
+    """
+    rows = []
+    for r in d.get("edges", []) or []:
+        try:
+            i, j = int(r["a"]), int(r["b"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (0 <= i < len(attrs) and 0 <= j < len(attrs)):
+            continue                      # one end is gone; the edge is not
+        ua, ub = int(attrs[i].uid), int(attrs[j].uid)
+        if ua == ub:
+            continue
+        out = dict(r)
+        if ua <= ub:
+            out["a"], out["b"] = ua, ub
+        else:
+            out["a"], out["b"] = ub, ua
+            out["w_ab"], out["w_ba"] = r.get("w_ba", 0.0), r.get("w_ab", 0.0)
+            out["n_ab"], out["n_ba"] = r.get("n_ba", 0), r.get("n_ab", 0)
+        rows.append(out)
+    d["edges"] = rows
+    ln = d.get("last_node")
+    if ln is None:
+        d["last_node"] = None
+        return
+    try:
+        k = int(ln)
+    except (TypeError, ValueError):
+        d["last_node"] = None
+        return
+    d["last_node"] = int(attrs[k].uid) if 0 <= k < len(attrs) else None
+
+
 def apply_l5_payload(stream, payload: dict) -> None:
     """Restore a stream from plain payload data (see build_l5_payload).
 
@@ -472,6 +515,8 @@ def apply_l5_payload(stream, payload: dict) -> None:
     g = payload.get("graph")
     if g is not None:
         from src.L3_memory import TraceGraph
+        if payload.get("graph_ids") != "uid":
+            _graph_index_to_uid(g, attrs)
         stream.graph = TraceGraph.from_dict(g)
 
     # M1: the self-model and the error it makes. Missing in older checkpoints;

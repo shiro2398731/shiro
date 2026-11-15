@@ -131,11 +131,19 @@ class Edge:
 
 class TraceGraph:
     """
-    Connectivity graph over attractor indices.
+    Connectivity graph over attractor uids.
 
-    The class does not hold centroids. Indices refer to the state space's
-    attractor list, which changes as attractors are merged or removed.
-    `merge_node` and `prune` keep the graph aligned.
+    A node is a region's stable name (`Attractor.uid`), not its row in the
+    state space's list. That distinction is the whole reason this class no
+    longer renumbers anything: an edge means "she moved from this region to
+    that one", so a structural change (a region removed, merged, folded) may
+    only *delete* edges, never shift the survivor's numbers.
+
+    Before, nodes were list positions and keeping the graph aligned meant
+    renumbering every edge on every structural change; missing one change
+    silently pointed edges at a neighbour. The state space is still the
+    authority on which uids are alive (`StateSpace.alive_uids`), and
+    `Consolidator.sync` prunes with that set.
 
     The graph is a downstream reader of the state space, never an editor.
     """
@@ -153,11 +161,11 @@ class TraceGraph:
     def touch(self, node: Optional[int], amount: float = 1.0,
               step: int = 0) -> Optional[Edge]:
         """
-        Record that the state was assigned to attractor `node`
-        (None when the state is outside every attractor).
+        Record that the state was assigned to region `node` -- a uid
+        (None when the state is outside every region).
 
         An edge forms only when the previous observation was also assigned
-        to an attractor and it was a different one. A transition that passes
+        to a region and it was a different one. A transition that passes
         through unassigned space does not form an edge.
 
         `step` is the caller's step index. It is used only to measure how
@@ -179,6 +187,10 @@ class TraceGraph:
         if e is None:
             e = Edge(a=k[0], b=k[1])
             self._edges[k] = e
+        # `prev < node` only decides which end is stored as `a`; it is not a
+        # claim about the order of the two names. Which direction the weight
+        # belongs to is recovered from `a`/`b` (see Edge.direction), so the
+        # comparison never reaches a statistic.
         e.touch(forward=(prev < node), step=step)
         return e
 
@@ -261,10 +273,19 @@ class TraceGraph:
 
     def merge_node(self, keep: int, drop: int) -> None:
         """
-        Called when the state space merges attractor `drop` into `keep`.
+        Called when the state space merges region `drop` into region `keep`.
 
-        Edges of `drop` transfer to `keep`; existing parallel edges sum.
-        Indices above `drop` shift down by one (the list is positional).
+        Both are uids, so this only redirects `drop`'s edges onto `keep`;
+        nothing else moves, and existing parallel edges sum. The surviving
+        edge inherits the later `last_seen` and the interval estimate of
+        whichever side was used more.
+
+        No caller today: `StateSpace._merge_overlapping` merges regions and
+        `Consolidator.sync` then deletes the absorbed region's edges instead
+        of transferring them. That is a real loss of history, kept as-is
+        because transferring would have to decide which of two weights
+        describes the merged region -- a choice this module has no criterion
+        for.
         """
         if keep == drop:
             return
@@ -272,63 +293,99 @@ class TraceGraph:
         new_edges: dict[tuple[int, int], Edge] = {}
 
         def remap(i: int) -> int:
-            if i == drop:
-                return keep
-            if i > drop:
-                return i - 1
-            return i
+            return keep if i == drop else i
 
-        for (a, b), e in self._edges.items():
-            na, nb = remap(a), remap(b)
+        for e in self._edges.values():
+            na, nb = remap(e.a), remap(e.b)
             if na == nb:
                 continue
             k = self._key(na, nb)
-            # Direction is preserved through renumbering. If the edge ran
+            # Direction is preserved through the relabelling: if the edge ran
             # a -> b before, it still runs from whichever of na, nb was a.
             w_ab, n_ab, w_ba, n_ba = e.w_ab, e.n_ab, e.w_ba, e.n_ba
-            if a != k[0]:
+            if e.a != k[0]:
                 w_ab, n_ab, w_ba, n_ba = w_ba, n_ba, w_ab, n_ab
-            if k in new_edges:
-                cur = new_edges[k]
+            cur = new_edges.get(k)
+            if cur is None:
+                new_edges[k] = Edge(a=k[0], b=k[1],
+                                    w_ab=w_ab, n_ab=n_ab,
+                                    w_ba=w_ba, n_ba=n_ba,
+                                    last_seen=e.last_seen,
+                                    intervals=e.intervals)
+            else:
+                busier = (w_ab + w_ba) > (cur.w_ab + cur.w_ba)
                 cur.w_ab += w_ab
                 cur.n_ab += n_ab
                 cur.w_ba += w_ba
                 cur.n_ba += n_ba
-            else:
-                new_edges[k] = Edge(a=k[0], b=k[1],
-                                    w_ab=w_ab, n_ab=n_ab,
-                                    w_ba=w_ba, n_ba=n_ba)
+                cur.last_seen = max(cur.last_seen, e.last_seen)
+                if busier:
+                    cur.intervals = e.intervals
 
         self._edges = new_edges
         if self._last_node is not None:
             self._last_node = remap(self._last_node)
 
-    def prune(self, alive_nodes: set[int]) -> None:
+    def relabel(self, perm: dict[int, int]) -> None:
         """
-        Drop edges touching removed attractors and renumber the remainder
-        to 0..n-1 matching the state space's new list.
-        """
-        ordered = sorted(alive_nodes)
-        remap = {old: new for new, old in enumerate(ordered)}
+        Rename every node through `perm` (old uid -> new uid).
 
+        Needing this is not normal: a uid is assigned at birth and never
+        changes afterwards. It exists for two callers that are not the running
+        system -- the relabelling-invariance test (the claim that a name means
+        nothing is only testable by renaming everything and getting the same
+        behaviour back) and, indirectly, the loader that converts an archive
+        written before uids existed.
+
+        `perm` must be injective. If two regions were given the same name the
+        edges would silently sum, and the graph would report a connection that
+        never happened.
+        """
+        if not perm:
+            return
         new_edges: dict[tuple[int, int], Edge] = {}
         for e in self._edges.values():
-            if e.a not in remap or e.b not in remap:
+            na, nb = int(perm.get(e.a, e.a)), int(perm.get(e.b, e.b))
+            if na == nb:
                 continue
-            na, nb = remap[e.a], remap[e.b]
-            k = self._key(na, nb)
-            # Reordering can swap which end is the low index; swap the
-            # directional weights with it so a -> b stays a -> b.
             w_ab, n_ab, w_ba, n_ba = e.w_ab, e.n_ab, e.w_ba, e.n_ba
-            if e.a != k[0]:
+            if na > nb:
+                na, nb = nb, na
                 w_ab, n_ab, w_ba, n_ba = w_ba, n_ba, w_ab, n_ab
-            new_edges[k] = Edge(a=k[0], b=k[1],
-                                w_ab=w_ab, n_ab=n_ab,
-                                w_ba=w_ba, n_ba=n_ba)
-
+            k = (na, nb)
+            cur = new_edges.get(k)
+            if cur is None:
+                new_edges[k] = Edge(a=na, b=nb,
+                                    w_ab=w_ab, n_ab=n_ab,
+                                    w_ba=w_ba, n_ba=n_ba,
+                                    last_seen=e.last_seen,
+                                    intervals=e.intervals)
+            else:
+                cur.w_ab += w_ab
+                cur.n_ab += n_ab
+                cur.w_ba += w_ba
+                cur.n_ba += n_ba
+                cur.last_seen = max(cur.last_seen, e.last_seen)
+        # Insertion order is preserved, which is what `neighbors()` falls back
+        # on when two edges have the same weight.
         self._edges = new_edges
         if self._last_node is not None:
-            self._last_node = remap.get(self._last_node)
+            self._last_node = int(perm.get(self._last_node, self._last_node))
+
+    def prune(self, alive: set[int]) -> None:
+        """
+        Drop every edge touching a uid that is no longer alive.
+
+        A filter, not a renumbering. The previous version also renumbered the
+        survivors into 0..n-1 to match the state space's list -- which is what
+        made each structural change a chance to point an edge at the wrong
+        region, and what made the operation O(E) with a Python loop over every
+        edge on every change.
+        """
+        if self._last_node is not None and self._last_node not in alive:
+            self._last_node = None
+        self._edges = {k: e for k, e in self._edges.items()
+                       if e.a in alive and e.b in alive}
 
     # ---------- observation ----------
 

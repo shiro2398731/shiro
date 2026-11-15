@@ -157,7 +157,12 @@ class RecallEngine:
             # No attractor within one characteristic scale of the state.
             return Recall(path=[], weights=[])
 
-        path, weights = self._spread(graph, best_i, first_weight=1.0)
+        # The match is found by row (the geometry lives in parallel arrays) but
+        # the graph is addressed by uid, so translate once, here. The recalled
+        # path is therefore a list of region names, not of table positions, and
+        # stays meaningful after a structural change.
+        start = int(attrs[best_i].uid)
+        path, weights = self._spread(graph, start, first_weight=1.0)
         return Recall(path=path, weights=weights, spontaneous=False)
 
     # ---------- un-cued ----------

@@ -207,12 +207,17 @@ class Identity:
             return {"n_nodes": 0, "n_edges": 0, "mean_w": 0.0,
                     "centroid_norm": 0.0, "span": 0.0}
 
-        nodes = sorted(core.nodes())
+        nodes = core.nodes()
         attrs = state_space.attractors()
-        n = len(attrs)
-        nodes = [i for i in nodes if i < n]
+        row = state_space.uid_row()
+        # The core names regions by uid; the geometry lives in rows. The order
+        # here exists only so the float sums below have one canonical
+        # evaluation order -- it is the centroid bytes, not the name, so no
+        # ranking anywhere depends on what a region is called.
+        nodes = [u for u in nodes if u in row]
+        nodes.sort(key=lambda u: attrs[row[u]].mu.tobytes())
 
-        mus = np.stack([attrs[i].mu for i in nodes]) if nodes else None
+        mus = np.stack([attrs[row[u]].mu for u in nodes]) if nodes else None
         centroid_norm = float(np.linalg.norm(mus.mean(axis=0))) if mus is not None else 0.0
 
         span = 0.0

@@ -23,6 +23,7 @@ Run: .\.venv\Scripts\python.exe tests\test_uid.py
 from __future__ import annotations
 
 import ast
+import collections
 import os
 import pathlib
 import sys
@@ -38,6 +39,10 @@ from src.L5_cognition.grounding import GroundingTable  # noqa: E402
 from src.L5_cognition.stream import Stream  # noqa: E402
 
 TERRAIN = ROOT / "src" / "L5_cognition" / "terrain.py"
+L5 = ROOT / "src" / "L5_cognition"
+L3 = ROOT / "src" / "L3_memory"
+L4 = ROOT / "src" / "L4_drive"
+L8I = ROOT / "src" / "L8_identity"
 
 
 def _ran(steps: int = 60, dim: int = 128) -> Stream:
@@ -142,6 +147,46 @@ def test_a_legacy_checkpoint_is_converted_to_uids() -> None:
     print(f"       legacy payload -> uids 1..{max(uids)}, next_uid={space2._next_uid}")
 
 
+def test_a_legacy_graph_keeps_its_direction_when_the_names_flip() -> None:
+    """Old graph payloads key their nodes by table index, and the conversion to
+    uids can put the two ends in the other order. `w_ab` is the weight leaving
+    the stored `a`, so a swap that did not swap the two directions would turn
+    "she goes there" into "she comes back" -- with the right total weight and
+    the right edge count, so nothing would notice.
+
+    The real archive cannot exercise this: its uids happen to be index+1, so no
+    pair flips. Hence a payload built on purpose.
+    """
+    st = _ran()
+    payload = persist.build_l5_payload(st)
+    i, j = 10, 11
+    at = payload["attractors"]
+    at[i]["uid"], at[j]["uid"] = at[j]["uid"], at[i]["uid"]
+    assert int(at[i]["uid"]) > int(at[j]["uid"]), "the swap did not create a flip"
+
+    payload["graph"] = {
+        "edges": [{"a": i, "b": j, "w_ab": 3.0, "n_ab": 3,
+                   "w_ba": 1.0, "n_ba": 1}],
+        "last_node": i,
+    }
+    payload.pop("graph_ids", None)
+    payload.pop("symbol_ids", None)
+
+    again = Stream()
+    persist.apply_l5_payload(again, payload)
+    space = again.landscape.state_space
+    uid_i = int(space.attractors()[i].uid)
+    uid_j = int(space.attractors()[j].uid)
+    assert uid_i > uid_j
+
+    e = again.graph.edge(uid_i, uid_j)
+    assert e is not None, "the edge vanished in the conversion"
+    assert abs(again.graph.directed(uid_i, uid_j) - 3.0) < 1e-12, (
+        again.graph.directed(uid_i, uid_j), again.graph.directed(uid_j, uid_i))
+    assert abs(again.graph.directed(uid_j, uid_i) - 1.0) < 1e-12
+    print(f"       index-keyed edge i->j (3.0) survived as uid {uid_i}->{uid_j} (3.0)")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 2. 名字没有含义
 # ══════════════════════════════════════════════════════════════════════════════
@@ -171,8 +216,26 @@ def _rename_everywhere(st, perm: dict) -> None:
     if st._last_symbol is not None:
         st._last_symbol = int(perm[int(st._last_symbol)])
 
+    # The graph names regions too, so the same rename has to reach it. Without
+    # this the graph keeps the old names, every edge misses on lookup, and the
+    # tension field shrinks to nothing -- a difference caused by the test, not
+    # by the code.
+    st.graph.relabel({int(k): int(v) for k, v in perm.items()})
+
+    # Identity counts edges by (uid, uid) as well. It does not feed the
+    # dynamics, but a "consistent rename" that skips it is not consistent.
+    idn = st.identity
+    def pair(k):
+        return (int(perm[int(k[0])]), int(perm[int(k[1])]))
+    idn._appear = collections.defaultdict(int, {pair(k): v for k, v in idn._appear.items()})
+    idn._edge_snapshot = {pair(k): v for k, v in idn._edge_snapshot.items()}
+
     # A fresh name must never collide with a live one.
     space._next_uid = max(int(a.uid) for a in space.attractors()) + 1
+    # The name -> row map is cached per structural version, and renaming is the
+    # one thing that changes a name without changing the structure. Production
+    # never does this (a uid is assigned at birth), so the cache has to be told.
+    space._uid_row = None
 
 
 def test_consistent_relabelling_changes_nothing() -> None:
@@ -200,37 +263,74 @@ def test_consistent_relabelling_changes_nothing() -> None:
     assert abs(a.self_model.bits_per_observation
                - b.self_model.bits_per_observation) < 1e-9, \
         "renaming changed her self-prediction loss"
-    print("       names reversed everywhere -> same trajectory, depths, MI and bits")
+
+    # Structure, not just the trajectory: the graph and the recalled path name
+    # regions, so a rename that leaked into either would show up here even if
+    # the step happened to come out the same.
+    assert len(a.graph) == len(b.graph), (len(a.graph), len(b.graph))
+    assert abs(sum(e.w for e in a.graph.edges())
+               - sum(e.w for e in b.graph.edges())) < 1e-9, \
+        "renaming changed the connectivity weights"
+    ra, rb = a._last_recall, b._last_recall
+    assert (ra is None) == (rb is None)
+    if ra is not None:
+        assert len(ra.path) == len(rb.path), (ra.path, rb.path)
+        assert abs(sum(ra.weights) - sum(rb.weights)) < 1e-9
+
+    print("       names reversed everywhere -> same trajectory, depths, MI, bits, "
+          f"{len(a.graph)} edges, recalled path of {0 if ra is None else len(ra.path)}")
 
 
 def test_uid_is_not_used_for_ordering_or_arithmetic() -> None:
     """A name that can be compared or sorted becomes a preference (C3).
 
-    Mechanical check over terrain.py: no `x.uid` inside a binary operation, a
-    comparison, or the argument of sorted()/min()/max(). Assignments, dict keys
-    and set membership stay allowed -- that is what a name is for.
+    Mechanical check over every module that handles region names: no `x.uid`
+    inside a binary operation, a comparison, or the argument of
+    sorted()/min()/max(). Assignments, dict keys and set membership stay
+    allowed -- that is what a name is for.
+
+    This is the cheap guard for the *direct* form of the leak, where the field
+    itself appears in an expression. It is not enough on its own: the leak found
+    on 2026-11-14 was `OnlineSelfModel.predict` breaking ties with
+    `max(..., key=lambda kv: (count, -id))` -- no `.uid` in sight, the name
+    arriving as `kv[0]`. Only the behavioural test above (rename everything,
+    expect the same trajectory) caught that one. Keep both: this one is
+    per-file and whole-file, so the direct form cannot come back in a new
+    helper.
     """
-    tree = ast.parse(TERRAIN.read_text(encoding="utf-8"))
+    files = [
+        TERRAIN,                                   # names live here
+        L5 / "stream.py",                          # uses them every step
+        L5 / "self_model.py",                      # keys and a tie-break
+        L5 / "grounding.py",                       # keys
+        L3 / "trace.py",                           # graph nodes
+        L3 / "consolidate.py",                     # pruning by alive set
+        L3 / "recall.py",                          # path through the graph
+        L4 / "drive.py",                           # tension pairs
+        L8I / "identity.py",                       # core members
+    ]
     offenders: list[str] = []
 
     def is_uid(node) -> bool:
         return isinstance(node, ast.Attribute) and node.attr == "uid"
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.BinOp):
-            if is_uid(node.left) or is_uid(node.right):
-                offenders.append(f"arithmetic at line {node.lineno}")
-        elif isinstance(node, ast.Compare):
-            for part in [node.left] + list(node.comparators):
-                if is_uid(part):
-                    offenders.append(f"comparison at line {node.lineno}")
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
-                and node.func.id in {"sorted", "min", "max"}:
-            if any(is_uid(sub) for sub in ast.walk(node)):
-                offenders.append(f"{node.func.id}() at line {node.lineno}")
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.BinOp):
+                if is_uid(node.left) or is_uid(node.right):
+                    offenders.append(f"{path.name}:{node.lineno} arithmetic")
+            elif isinstance(node, ast.Compare):
+                for part in [node.left] + list(node.comparators):
+                    if is_uid(part):
+                        offenders.append(f"{path.name}:{node.lineno} comparison")
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                    and node.func.id in {"sorted", "min", "max"}:
+                if any(is_uid(sub) for sub in ast.walk(node)):
+                    offenders.append(f"{path.name}:{node.lineno} {node.func.id}()")
 
     assert not offenders, f"uid used as a value: {offenders}"
-    print("       terrain.py: no .uid in arithmetic, comparisons, sorted/min/max")
+    print(f"       {len(files)} modules: no .uid in arithmetic, comparisons, sorted/min/max")
 
 
 def main() -> int:

@@ -56,35 +56,23 @@ class Consolidator:
 
     # ---------- alignment ----------
 
-    def sync(self, graph: TraceGraph, state_space,
-             remap: Optional[dict] = None) -> dict:
+    def sync(self, graph: TraceGraph, state_space) -> dict:
         """
-        Align the graph with the current attractor list.
+        Align the graph with the set of regions that still exist.
 
-        `remap` is the state space's old->new index map for the structural
-        change that just happened (`StateSpace.take_index_remap`). It is the
-        only correct input: the old version assumed the list only ever loses
-        its *last* entries and kept edges with index below the new length, so
-        removing a middle region left every later edge pointing at its
-        neighbour. Passing the map makes `prune` (which renumbers survivors in
-        order) line the graph up exactly.
+        Graph nodes are uids, so this is a filter, not a renumbering: the
+        survivors keep their names. The old signature took the state space's
+        old->new index map and rebuilt every edge through it -- correct only
+        if the map reached the graph in time, and O(E) with a Python loop on
+        every structural change.
 
-        Without a map the old behaviour is kept for callers that only need a
-        bounds check.
+        The early-out matters: at a few hundred edges, rebuilding the
+        dictionary on every step is a meaningful share of a 3 ms step.
         """
-        n = len(state_space)
-        before = len(graph)
-        if remap is not None:
-            if all(e.a < n and e.b < n for e in graph.edges()) and len(remap) == n:
-                return {"dropped_edges": 0}
-            graph.prune({int(k) for k in remap.keys()})
-            return {"dropped_edges": before - len(graph)}
-        alive = {i for i in range(n)}
-        # If nothing has changed, rebuilding the whole edge dictionary every
-        # step is pure cost. Rewriting it is O(E) with a Python loop over every
-        # edge; at a few hundred edges that is a meaningful share of a 3 ms step.
-        if all(e.a < n and e.b < n for e in graph.edges()) and not getattr(graph, "_needs_renumber", False):
+        alive = state_space.alive_uids()
+        if all(e.a in alive and e.b in alive for e in graph.edges()):
             return {"dropped_edges": 0}
+        before = len(graph)
         graph.prune(alive)
         return {"dropped_edges": before - len(graph)}
 
@@ -110,11 +98,13 @@ class Consolidator:
 
     def report(self, graph: TraceGraph, state_space) -> dict:
         """Current graph statistics. Observation only."""
-        n = len(state_space)
+        # Every live region, not rows 0..n-1: a uid may be far above the
+        # region count (that just means earlier regions were folded).
+        uids = list(state_space.alive_uids())
         st = graph.stats()
-        degrees = [graph.degree(i) for i in range(n)] if n else []
+        degrees = [graph.degree(u) for u in uids] if uids else []
         return {
-            "nodes": n,
+            "nodes": len(uids),
             "edges": st["edges"],
             "total_w": round(st["total_w"], 4),
             "max_w": round(st["max_w"], 4),

@@ -71,8 +71,9 @@ class OnlineSelfModel:
 
     Determinism
     -----------
-    Ties are broken by the smaller symbol id, not by dictionary order, so a
-    replay produces the same prediction from the same counts.
+    Ties are broken by the order in which the counts were recorded, not by
+    symbol id, so a replay produces the same prediction from the same counts
+    and the prediction does not depend on what the symbols are called.
 
     What it is not
     --------------
@@ -101,9 +102,13 @@ class OnlineSelfModel:
         row = self._counts.get(int(state))
         if not row:
             return None
-        # Laplace smoothing does not change the argmax, so it is not applied
-        # here; the tie-break by id is what makes the choice reproducible.
-        best = max(row.items(), key=lambda kv: (kv[1], -kv[0]))
+        # Ties go to whichever next region she saw first from this one, i.e.
+        # the first entry the counting dictionary holds -- never to the smaller
+        # id. The id here is a region's name; using it to break a tie makes the
+        # prediction depend on the names, and renaming every region then
+        # changes her behaviour (measured: tests/test_uid.py caught it as a
+        # different trajectory after 40 steps).
+        best = max(row.items(), key=lambda kv: kv[1])
         return int(best[0])
 
     def distribution(self, state: int) -> dict:

@@ -67,12 +67,13 @@ def test_counts_that_do_not_add_up_are_reported() -> None:
     print("       injected total mismatch -> reported")
 
 
-def test_a_graph_edge_pointing_past_the_table_is_reported() -> None:
+def test_a_graph_edge_pointing_at_a_dead_region_is_reported() -> None:
     st = _ran()
-    n = len(st.landscape.state_space.attractors())
+    space = st.landscape.state_space
     graph = st.graph
-    # reach into the structure the same way a stale index would
-    key = (0, n + 3)
+    # a uid that no region has: the shape a stale node takes after a fold
+    dead = max(space.alive_uids()) + 7
+    key = (1, dead)
     try:
         from src.L3_memory.trace import Edge
         graph._edges[key] = Edge(a=key[0], b=key[1])
@@ -80,7 +81,7 @@ def test_a_graph_edge_pointing_past_the_table_is_reported() -> None:
         raise AssertionError(f"could not inject the edge: {e}")
     problems = check(st, journal_path=None)
     assert any("graph.edge.b" in p for p in problems), problems
-    print(f"       injected edge (0, {n + 3}) -> reported")
+    print(f"       injected edge (1, {dead}) -> reported")
 
 
 def main() -> int:

@@ -316,6 +316,10 @@ class StateSpace:
         self._scale_cache_n: int = -1
         self._mu_cache: Optional[np.ndarray] = None
         self._mu_cache_n: int = -1
+        # uid -> row in `_attractors`. Built on demand, dropped whenever the
+        # table changes (`_cache_ver`): a uid never moves, but its row does.
+        self._uid_row: Optional[dict[int, int]] = None
+        self._uid_row_ver: int = -1
         # Structural version. The centroid matrix used to be rebuilt only when
         # the region *count* changed, which is unsound: removing one region and
         # adding another in the same step keeps the count identical and leaves
@@ -492,9 +496,27 @@ class StateSpace:
         """The set of uids currently in the table. Reference tables prune with it."""
         return {int(a.uid) for a in self._attractors}
 
+    def uid_row(self) -> dict:
+        """uid -> current row. Cached per structural version.
+
+        The graph and the tension field address regions by uid but read their
+        numbers from parallel arrays, so they need this map on every step. It
+        is rebuilt only when the table changes, not per step: the cost is one
+        pass over the regions per structural change.
+
+        The cache assumes what the rest of the system guarantees: a uid is
+        assigned once at birth and never changes afterwards. A caller that
+        renames regions in place (the relabelling invariance test does) must
+        clear `_uid_row` — otherwise the map still answers with the old names.
+        """
+        if self._uid_row is None or self._uid_row_ver != self._cache_ver:
+            self._uid_row = {int(a.uid): i for i, a in enumerate(self._attractors)}
+            self._uid_row_ver = self._cache_ver
+        return self._uid_row
+
     def uid_to_index(self) -> dict:
-        """uid -> current table index. For the places that still need an index."""
-        return {int(a.uid): i for i, a in enumerate(self._attractors)}
+        """uid -> current table index. A copy: callers must not edit the cache."""
+        return dict(self.uid_row())
 
     # Compatibility alias.
     def traces(self) -> List[Attractor]:

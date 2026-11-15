@@ -1,11 +1,13 @@
-r"""区域编号在结构变化后必须跟着走。
+r"""区域编号在结构变化后必须跟着走 —— 或者干脆不用编号。
 
-区域编号是**位置性**的：删掉中间一个，后面每个都往前挪一位。而上下游都存着编号
-（图、指代表、自模型、广播给 L6 的 id、预演的预测序列）。不跟着改，它们就会静默指到
-邻居身上——这是"看起来有数据"的第三类来源。
+区域编号有两种，混在一起就是"看起来有数据"的第三类来源：
 
-`StateSpace` 现在在每次结构变化（recover 删除 / 合并 / 折叠）后发布一张 old->new 表，
-`Stream` 取走它，把身上所有编号改一遍，并把同一张表交给 `Consolidator.sync`。
+    名字（uid）  图的两端、指代表、自模型、`_last_symbol`。永不因结构变化而变。
+    行号（下标） detector 的当前区域、停留账本、预演序列。位置性的，必须改。
+
+`StateSpace` 在每次结构变化（recover 删除 / 合并 / 折叠）后发布一张 old->new 行号表，
+`Stream` 取走它给**行号**用；图只要按 `alive_uids()` 删掉消失的那几端，`Consolidator.sync`
+做这件事，不需要那张表。本文件分别钉住这两半。
 
 Run: .\.venv\Scripts\python.exe tests\test_index_remap.py
 """
@@ -62,24 +64,37 @@ def test_no_remap_when_nothing_was_removed() -> None:
 # 2. 图跟着走（旧行为会留下指错的边）
 # ══════════════════════════════════════════════════════════════════════════════
 
-def test_graph_edges_follow_a_middle_removal() -> None:
+def test_graph_edges_are_keyed_by_uid_and_a_removal_only_deletes() -> None:
+    """A structural change may only *delete* edges, never renumber them.
+
+    This used to be the renumbering test: nodes were table indices, so removing
+    one region shifted every later node and the map had to be pushed through
+    the graph. With uids, the surviving edges are untouched -- which is the
+    property that removes the failure mode (a missed remap pointing an edge at
+    a neighbour).
+    """
     ss = _space(4)
+    for i, a in enumerate(ss.attractors()):
+        a.uid = i + 1
+    ss._next_uid = 5
     g = TraceGraph()
-    for node in (0, 1, 2, 3):
+    for node in (1, 2, 3, 4):
         g.touch(node)
     edges_before = {(e.a, e.b) for e in g.edges()}
-    assert edges_before == {(0, 1), (1, 2), (2, 3)}, edges_before
+    assert edges_before == {(1, 2), (2, 3), (3, 4)}, edges_before
 
-    ss._attractors[1].amp = 1e-9
+    ss._attractors[1].amp = 1e-9          # uid 2 will fall below min_amp
     ss.recover()
-    remap = ss.take_index_remap()
-    Consolidator().sync(g, ss, remap=remap)
+    assert ss.alive_uids() == {1, 3, 4}, ss.alive_uids()
 
+    dropped = Consolidator().sync(g, ss)
     edges_after = {(e.a, e.b) for e in g.edges()}
-    # old (0,1) and (1,2) touch the removed region -> gone; old (2,3) -> (1,2)
-    assert edges_after == {(1, 2)}, edges_after
-    assert all(a < 3 and b < 3 for a, b in edges_after)
-    print(f"       edges {edges_before} -> {edges_after}")
+    # Edges touching the removed uid 2 are gone; (3, 4) keeps its numbers.
+    assert edges_after == {(3, 4)}, edges_after
+    assert dropped == {"dropped_edges": 2}, dropped
+    assert all(a in ss.alive_uids() and b in ss.alive_uids()
+               for a, b in edges_after)
+    print(f"       removed uid 2: edges {edges_before} -> {edges_after}, nothing renumbered")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -149,8 +164,8 @@ def test_a_live_stream_leaves_no_dangling_index() -> None:
     n = len(space.attractors())
     uids = space.alive_uids()
     # Two conventions live here, on purpose:
-    #   * reference tables (grounding, self-model, _last_symbol) are keyed by uid;
-    #   * the graph and the detector still use table indices.
+    #   * names (uid): graph edges, grounding, self-model, _last_symbol;
+    #   * rows (index): detector.current_attractor, _dwell_region.
     # The count need not fall: forty more steps also create regions. What must
     # hold is that nothing points at a region that is gone.
     assert set(st.grounding.counts) <= uids, sorted(set(st.grounding.counts) - uids)
@@ -158,12 +173,12 @@ def test_a_live_stream_leaves_no_dangling_index() -> None:
     for row in st.self_model._counts.values():
         assert set(row) <= uids, sorted(set(row) - uids)
     assert st._last_symbol is None or int(st._last_symbol) in uids
+    assert all(e.a in uids and e.b in uids for e in st.graph.edges())
     cur = st.detector.current_attractor
     assert cur is None or 0 <= int(cur) < n
-    assert all(e.a < n and e.b < n for e in st.graph.edges())
     dropped_after = int(getattr(st.grounding, "dropped_by_remap", 0))
-    print(f"       regions {n_before} -> {n}; every uid-keyed table inside "
-          f"{len(uids)} live uids; graph/detector inside {n} indices; "
+    print(f"       regions {n_before} -> {n}; every name inside {len(uids)} live "
+          f"uids (graph edges {len(st.graph)}); row ids inside [0, {n}); "
           f"rows dropped: {dropped_after - dropped_before}")
 
 
