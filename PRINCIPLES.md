@@ -16,7 +16,7 @@
 | 9 | 说"要不要长跑"之前，先问"能否用存档压测替代" | 57 小时 vs 20 秒 | 用长跑掩盖没想清楚的判据 |
 | 10 | 不确定就写进 HANDOFF，不凭记忆行动 | 我会被压缩，记忆不可靠 | 下一轮重复已完成的工作或推翻已定的决策 |
 
-**当前硬指标**：`git status` clean；**35 个非空文件 / 202 例全过**；人为常量计数 **0**（`tests/test_constant_audit.py` 钉住）。
+**当前硬指标**：`git status` clean；**36 个非空文件 / 207 例全过**；人为常量计数 **0**（`tests/test_constant_audit.py` 钉住）。
 另有两条与"身份"有关的机械判据：`tests/test_uid.py` 要求区域 uid **不参与** `BinOp`/`Compare`/`sorted|min|max`
 （名字不是量，9 个模块全扫），且 uid 全域一致重排后轨迹、连通权重、召回路径、指代与自模型统计逐位不变
 （名字没有含义，C3）；`tests/test_static_names.py` 用 symtable 扫全部模块，不许有未定义全局名。

@@ -40,6 +40,11 @@ MODULES = [
     ("P3", "src.runtime.process_3_life"),
     ("P2", "src.runtime.process_2_mind"),
 ]
+
+# 看护（tools/keeper.py）不是她的一部分，是"谁还活着"的守夜人。它必须
+#   * 最后起：模块先各自起来，看护只补缺的；
+#   * 最先停：否则停她的时候会有东西一边收尸一边重生。
+KEEPER_MODULE = "tools.keeper"
 LOGS = ROOT / "data" / "logs"
 PIDS = ROOT / "data" / "control" / "pids.json"
 
@@ -68,6 +73,27 @@ def _running() -> list[int]:
     return [int(x) for x in ps.stdout.split() if x.isdigit()]
 
 
+def _keeper_running() -> list[int]:
+    """PIDs of live keeper processes."""
+    if os.name != "nt":
+        out = []
+        for p in Path("/proc").iterdir():
+            try:
+                cmd = (p / "cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="replace")
+            except Exception:
+                continue
+            if KEEPER_MODULE in cmd:
+                out.append(int(p.name))
+        return out
+    ps = subprocess.run(
+        ["powershell", "-NoProfile", "-Command",
+         "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+         "Where-Object { $_.CommandLine -match 'tools[.\\\\]keeper' } | "
+         "ForEach-Object { $_.ProcessId }"],
+        capture_output=True, text=True)
+    return [int(x) for x in ps.stdout.split() if x.isdigit()]
+
+
 def start() -> int:
     already = _running()
     if already:
@@ -90,6 +116,24 @@ def start() -> int:
         time.sleep(0.8)
     PIDS.parent.mkdir(parents=True, exist_ok=True)
     PIDS.write_text(json.dumps(pids, indent=2), encoding="utf-8")
+
+    # 守夜人最后起：它只补缺的，不参与首启。
+    if not _keeper_running():
+        log = (LOGS / "keeper.log").open("ab")
+        kwargs = dict(cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT,
+                      stdin=subprocess.DEVNULL, close_fds=True)
+        if os.name == "nt":
+            kwargs["creationflags"] = FLAGS
+        else:
+            kwargs["start_new_session"] = True
+        kp = subprocess.Popen([str(PY), "-m", KEEPER_MODULE], **kwargs)
+        log.close()
+        pids["KEEPER"] = kp.pid
+        PIDS.write_text(json.dumps(pids, indent=2), encoding="utf-8")
+        print(f"[headless] KEEPER pid={kp.pid} log=data/logs/keeper.log")
+    else:
+        print(f"[headless] keeper already running ({len(_keeper_running())} processes)")
+
     print(f"[headless] started; nothing here needs a console to stay alive")
     return 0
 
@@ -105,6 +149,17 @@ def status(timeout_s: float = 8.0) -> int:
 
 
 def stop(timeout_s: float = 20.0) -> int:
+    # 守夜人最先停。它还在的话，下面每一次收尸都会被它当成崩溃、马上重生一个，
+    # 于是"停她"变成"看着它们互相拉锯"。
+    for pid in _keeper_running():
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                               capture_output=True)
+            else:
+                os.kill(pid, 9)
+        except Exception:                                 # noqa: BLE001
+            pass
     if not _running():
         # Nothing to stop. Writing a command here would leave it in the inbox
         # for the *next* boot to execute on arrival -- which is exactly how a

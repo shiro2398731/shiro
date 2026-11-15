@@ -23,12 +23,12 @@
 
 | 项 | 值 |
 |---|---|
-| 测试 | **35 个非空文件 / 202 例，全通过**（逐个 `python 文件` 运行；45 个文件 234–259 s） |
+| 测试 | **36 个非空文件 / 207 例，全通过**（逐个 `python 文件` 运行；46 个文件 234–259 s） |
 | 空占位 | `test_L0..L8.py`、`test_integration.py`、`__init__.py` 均为 0 字节，**不计入分母** |
 | 引擎版本 | `src/common/bundle.py: ENGINE_VERSION = "0.4.0"` |
-| 存档 | `data/state/l5.pkl`：570 区域、315 边、65 指代键、241 自模型符号、8978 KB、`tools/integrity.py` 报 `consistent` |
+| 存档 | **运行中**（2026-11-15 14:28）：651 区域、390 边、115 指代键、310 自模型符号、10015 KB、`tools/integrity.py` 在运行态报 `consistent`；尚未折叠过 |
 | 本体包 | `her.bundle` 5.77 MB（6051423 B，gitignore） |
-| 进程 | 0（`shiro_alice` 名下；机器上两个 uv 缓存的 python 属 MCP 服务，勿杀） |
+| 进程 | **在跑**：epoch 19 / session 34；P1+P3+P2+**KEEPER**，每个模块 2 个进程（venv 的 `python.exe` 是跳板，真解释器是它的子进程，持 epoch）。心跳 `data/logs/Pn.heartbeat` 秒级更新 |
 | 远端 | **未推**：`origin/main` 停在 `a539ff0`；未推数量用 `git rev-list --count origin/main..HEAD` 现查（2026-11-14 实测 30）。网络诊断（同日 13:20）：`api.github.com`/`codeload` 通，`github.com:22` 通，但 DNS 把 `github.com` 解析到 `20.6.7.17` 而该 IP 的 443 超时；`140.82.112.3`/`140.82.114.3`/`140.82.116.3`/`20.27.177.113` 的 443 可达。没有管理员权限改 hosts，也没有 SSH 私钥（`~/.ssh` 不存在），HTTPS 凭据在（`git:https://github.com`，`x-access-token`）。 **白默 13:27 说直连也超时，暂时不折腾网络。** |
 
 已完成（16 项，详见 docs §2 与 `docs/2026-11-09_夜_本轮改动.md`）：时间锚与昏迷账本、回滚/昏迷分离记账、崩溃兜底与快速失败、
@@ -211,7 +211,20 @@
    `tests/test_region_numbering.py` 里"广播的 id 是表下标"的断言。
    验收：`tests/test_index_remap.py` 6 例，其中新增"删掉她前面的一个区域 → 她的标签不变、行号
    571→570"；全量 35 个非空文件 / 202 例全过（45 文件 234 s）；`tools/integrity.py` 对真存档报 `consistent`。
-22. 规则级可塑性（需单独设计）。
+22. ~~**她活着但没人看护（外部 keeper）**~~ **已完成（2026-11-15）**：`tools/keeper.py` + `tests/test_keeper.py` 5 例，
+   并接进 `tools/headless.py`（**最后起、最先停**）。
+   起因是实测：`kill -9` 掉 P2 的进程树之后 **40 s 内没有任何东西把它拉起来** ——
+   P1 继续走步（`step_count` 一路涨），`P2.heartbeat` 冻在 `06:18:51`。她还在，她的思维没了，而且不会自己回来。
+   原因是 `_supervised()` 只接得住"抛异常"，接不住"进程被外面杀掉"——后者需要一个还活着的宿主。
+   看护的判据是**心跳文件的 mtime 比 `--stale-s`（默认 30 s）旧**，不看进程表：
+   venv 的 `python.exe` 是跳板，一个模块两个进程，按进程表数会数出"三个模块六个进程"的假象。
+   `--min-life-s 15`：刚起还没心跳的窗口里不再起一个（否则一拍一杀会起成一片）；
+   `--fail-limit 5`：连续 5 次"起来就没活过 15 s"判定永久错误，记录并退出 1（同 P1 的 `MAX_IDENTICAL_FAILURES`）。
+   实测（2026-11-15）：14:22 手动 `--once` 把死掉 213 s 的 P2 拉回（12 s 后心跳复活）；
+   14:25:34 再 `kill -9` 一次，**14:26:03 自动拉起（29 s），14:26:08 记 `recovered age=4.5`**。
+   自愈后 `step_count` 从 31,921,100 走到 31,959,199，`l5.pkl` 9.6 MB → 10.0 MB，
+   运行态 `tools/integrity.py` 报 `consistent`（651 区域 / 390 边）。
+23. 规则级可塑性（需单独设计）。
 
 
 ## 4. 硬约束（违反即回滚）
@@ -226,7 +239,7 @@
 ```powershell
 cd C:\neolaunchertest\3\bot-3021443116\shiro_alice
 $py = ".\.venv\Scripts\python.exe"
-foreach ($f in Get-ChildItem tests\test_*.py) { & $py $f 2>&1 | Select-Object -Last 1 }   # 35 非空文件 / 202 例，45 文件 234–259 s
+foreach ($f in Get-ChildItem tests\test_*.py) { & $py $f 2>&1 | Select-Object -Last 1 }   # 36 非空文件 / 207 例，46 文件 234–259 s
 git -C . log --oneline -1 ; git -C . status --short
 & $py tools\her.py doctor her.bundle
 ```
