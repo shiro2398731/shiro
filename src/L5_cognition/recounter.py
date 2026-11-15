@@ -99,8 +99,13 @@ def recounter(stream, observations: np.ndarray) -> dict:
         if not np.isfinite(z) or z >= 1.0 or not (0 <= idx < len(attrs)):
             rows.append({"i": i, "region": None, "label": "none", "z": z})
             continue
-        label = grounding.label(idx) if grounding is not None else "region"
-        rows.append({"i": i, "region": idx, "label": label, "z": z})
+        # `_nearest_normalized` answers in rows (the geometry lives in parallel
+        # arrays); everything a caller sees is a name. Translating here is what
+        # keeps "which region did this observation fall into" comparable with
+        # the ids she actually published at the time.
+        uid = int(attrs[idx].uid)
+        label = grounding.label(uid) if grounding is not None else "region"
+        rows.append({"i": i, "region": uid, "label": label, "z": z})
         label_counts[label] = label_counts.get(label, 0) + 1
 
     resolved = sum(1 for r in rows if r["region"] is not None)

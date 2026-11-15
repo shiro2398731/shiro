@@ -67,8 +67,12 @@ import numpy as np
 
 @dataclass
 class Ignition:
-    """One ignition event."""
-    attractor_index: int
+    """One ignition event.
+
+    `attractor_id` is the region's name (uid), not its row: a report that
+    outlives the structure it was made in has to keep meaning the same region.
+    """
+    attractor_id: int
     strength: float
     x: np.ndarray
     t_event: str
@@ -91,7 +95,7 @@ class GlobalWorkspace:
 
         self._active_mu: Optional[np.ndarray] = None
         self._active_sigma: float = 0.0
-        self._active_index: Optional[int] = None
+        self._active_id: Optional[int] = None
 
     # ---------- strength ----------
 
@@ -122,7 +126,7 @@ class GlobalWorkspace:
                 return None
             self._active_mu = None
             self._active_sigma = 0.0
-            self._active_index = None
+            self._active_id = None
 
         attrs = state_space.attractors()
         if not attrs:
@@ -164,12 +168,12 @@ class GlobalWorkspace:
             return None
 
         a = attrs[best_i]
-        self._active_index = best_i
+        self._active_id = int(a.uid)
         self._active_mu = a.mu.copy()
         self._active_sigma = float(a.sigma)
 
         ign = Ignition(
-            attractor_index=best_i,
+            attractor_id=int(a.uid),
             strength=best,
             x=x.copy(),
             t_event=t_event,

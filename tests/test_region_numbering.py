@@ -67,7 +67,13 @@ def test_the_two_nearest_lookups_agree() -> None:
     print("       nearest_attractor() and _nearest_normalized() give the same index")
 
 
-def test_the_id_broadcast_to_l6_is_a_table_index_of_a_salient_region() -> None:
+def test_the_id_broadcast_to_l6_is_the_name_of_the_nearest_salient_region() -> None:
+    """Was: "is a table index of a salient region".
+
+    The id she broadcasts is now the region's name (uid), not its row, so the
+    assertion has to name the region rather than point at a position: resolve
+    the nearest salient row independently and compare the *uid* it maps to.
+    """
     from src.common import persist
     from src.L5_cognition.stream import Stream
 
@@ -81,16 +87,17 @@ def test_the_id_broadcast_to_l6_is_a_table_index_of_a_salient_region() -> None:
     aid = st.detector.current_attractor
     assert aid is not None
     space = st.landscape.state_space
-    sal = space.salient_indices()
-    assert 0 <= aid < len(space.attractors()), aid
-    assert aid in sal, "the reported id must be a salient region"
+    attrs = space.attractors()
+    assert int(aid) in space.alive_uids(), aid
 
-    # ...and it must be the nearest one *among the salient set*
-    mus = np.stack([space.attractors()[i].mu for i in sal])
-    sig = np.array([max(space.attractors()[i].sigma, 1e-12) for i in sal])
+    # ...and it must be the region nearest to the state *among the salient set*
+    sal = space.salient_indices()
+    mus = np.stack([attrs[i].mu for i in sal])
+    sig = np.array([max(attrs[i].sigma, 1e-12) for i in sal])
     zs = np.linalg.norm(mus - st._st.x, axis=1) / sig
-    assert int(sal[int(np.argmin(zs))]) == aid, (sal[int(np.argmin(zs))], aid)
-    print(f"       attractor_id={aid} is a table index and the nearest salient region")
+    want = int(attrs[int(sal[int(np.argmin(zs))])].uid)
+    assert want == int(aid), (want, aid)
+    print(f"       attractor_id={aid} is a live name and the nearest salient region")
 
 
 def test_the_two_lookups_differ_in_which_set_they_search() -> None:

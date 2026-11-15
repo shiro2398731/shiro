@@ -2,12 +2,14 @@ r"""区域编号在结构变化后必须跟着走 —— 或者干脆不用编�
 
 区域编号有两种，混在一起就是"看起来有数据"的第三类来源：
 
-    名字（uid）  图的两端、指代表、自模型、`_last_symbol`。永不因结构变化而变。
-    行号（下标） detector 的当前区域、停留账本、预演序列。位置性的，必须改。
+    名字（uid）  图的两端、指代表、自模型、`_last_symbol`、detector 发布给外部的标签。
+                 永不因结构变化而变。
+    行号（下标） 并行数组（质心/深度/尺度）里"第几行"。随表变化，但**没有任何地方存它**
+                 跨步使用：要用的时候现场查 `uid_row()`。
 
-`StateSpace` 在每次结构变化（recover 删除 / 合并 / 折叠）后发布一张 old->new 行号表，
-`Stream` 取走它给**行号**用；图只要按 `alive_uids()` 删掉消失的那几端，`Consolidator.sync`
-做这件事，不需要那张表。本文件分别钉住这两半。
+文件名沿用历史：`_apply_index_remap`、`take_index_remap`、`_publish_remap` 都在 2026-11-14 删掉了
+（那张事后补丁表本身就是"漏一次就指错"的来源）。本文件现在钉的是**结论**：
+结构变化之后，她身上不许有任何指错的地方。
 
 Run: .\.venv\Scripts\python.exe tests\test_index_remap.py
 """
@@ -33,31 +35,91 @@ from src.L5_cognition.terrain import Attractor, StateSpace  # noqa: E402
 def _space(n: int = 4, dim: int = 8) -> StateSpace:
     ss = StateSpace(dim=dim)
     for i in range(n):
-        ss._attractors.append(Attractor(mu=np.full(dim, 0.3 * i), amp=0.5))
+        a = Attractor(mu=np.full(dim, 0.3 * i), amp=0.5)
+        a.uid = i + 1
+        ss._attractors.append(a)
+    ss._next_uid = n + 1
     ss._total_steps = 100
     return ss
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 1. 状态空间发布正确的一张表
+# 1. 删掉一行，名字不动，行号会动
 # ══════════════════════════════════════════════════════════════════════════════
 
-def test_recover_publishes_old_to_new_and_clears_it() -> None:
+def test_a_removal_moves_rows_but_not_names() -> None:
+    """The whole point: the row index shifts, the name does not.
+
+    This used to be a test of the old->new index map. The map is gone; what is
+    left to check is the thing the map was papering over -- that no name moves
+    when the table does.
+    """
     ss = _space(4)
-    ss._attractors[1].amp = 1e-9          # will fall below min_amp
+    before = {int(a.uid): i for i, a in enumerate(ss.attractors())}
+    assert before == {1: 0, 2: 1, 3: 2, 4: 3}
+
+    ss._attractors[1].amp = 1e-9          # uid 2 will fall below min_amp
     ss.recover()
-    assert len(ss.attractors()) == 3
-    assert ss.take_index_remap() == {0: 0, 2: 1, 3: 2}
-    assert ss.take_index_remap() is None, "the map must be handed out once"
-    print("       removing index 1 -> {0:0, 2:1, 3:2}")
+
+    after = {int(a.uid): i for i, a in enumerate(ss.attractors())}
+    assert set(after) == {1, 3, 4}, after
+    assert after[3] != before[3] or after[4] != before[4], "the rows should shift"
+    assert ss.uid_row() == after, (ss.uid_row(), after)
+    print(f"       removed uid 2: rows {before} -> {after}, names untouched")
 
 
-def test_no_remap_when_nothing_was_removed() -> None:
+def test_a_clean_recover_changes_nothing() -> None:
     ss = _space(4)
     ss.recover()
     assert len(ss.attractors()) == 4
-    assert ss.take_index_remap() is None
-    print("       a clean recover publishes nothing")
+    assert ss.uid_row() == {1: 0, 2: 1, 3: 2, 4: 3}
+    print("       nothing removed: 4 rows, 4 names, unchanged")
+
+
+def test_a_structural_change_does_not_change_her_label() -> None:
+    """The id she publishes must keep meaning the same region.
+
+    Remove a region in front of the one she is in, then look: her label is
+    unchanged and the row it resolves to has moved up. Before 2026-11-14 the
+    label *was* the row, so this removal silently relabelled her -- and the only
+    thing standing between that and a wrong broadcast was an old->new map that
+    had to reach the detector in time.
+    """
+    from src.common import persist
+    from src.L5_cognition.stream import Stream
+
+    st = Stream()
+    if not persist.load_l5(st):
+        raise SystemExit("no L5 archive for this test")
+    for _ in range(60):
+        st.landscape.set_noise_amplitude(0.02)
+        st.step()
+
+    space = st.landscape.state_space
+    label = int(st.detector.current_attractor)
+    row_before = space.uid_row()[label]
+
+    victim = None
+    for i, a in enumerate(space.attractors()):
+        if int(a.uid) != label and i < row_before:
+            victim = a
+            break
+    assert victim is not None, "no region in front of hers to remove"
+    victim.amp = 1e-12
+    space.recover()
+
+    assert int(st.detector.current_attractor) == label, (
+        "her label moved because the table moved",
+        st.detector.current_attractor, label)
+    assert label in space.alive_uids()
+    row_after = space.uid_row()[label]
+    assert row_after < row_before, (row_before, row_after)
+
+    st.landscape.set_noise_amplitude(0.02)
+    st.step()
+    assert int(st.detector.current_attractor) in space.alive_uids()
+    print(f"       removed a region in front: label {label} kept, row "
+          f"{row_before} -> {row_after}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -74,9 +136,6 @@ def test_graph_edges_are_keyed_by_uid_and_a_removal_only_deletes() -> None:
     a neighbour).
     """
     ss = _space(4)
-    for i, a in enumerate(ss.attractors()):
-        a.uid = i + 1
-    ss._next_uid = 5
     g = TraceGraph()
     for node in (1, 2, 3, 4):
         g.touch(node)
@@ -156,30 +215,31 @@ def test_a_live_stream_leaves_no_dangling_index() -> None:
     victim = len(attrs) // 2
     attrs[victim].amp = 1e-12
     n_before = len(space.attractors())
-    dropped_before = int(getattr(st.grounding, "dropped_by_remap", 0))
     for _ in range(40):
         st.landscape.set_noise_amplitude(0.02)
         st.step()
 
     n = len(space.attractors())
     uids = space.alive_uids()
-    # Two conventions live here, on purpose:
-    #   * names (uid): graph edges, grounding, self-model, _last_symbol;
-    #   * rows (index): detector.current_attractor, _dwell_region.
-    # The count need not fall: forty more steps also create regions. What must
-    # hold is that nothing points at a region that is gone.
+    # Every id she stores is now a name. The count need not fall: forty more
+    # steps also create regions. What must hold is that nothing points at a
+    # region that is gone.
     assert set(st.grounding.counts) <= uids, sorted(set(st.grounding.counts) - uids)
     assert set(st.self_model._counts) <= uids, sorted(set(st.self_model._counts) - uids)
     for row in st.self_model._counts.values():
         assert set(row) <= uids, sorted(set(row) - uids)
     assert st._last_symbol is None or int(st._last_symbol) in uids
     assert all(e.a in uids and e.b in uids for e in st.graph.edges())
+    assert st._dwell_region is None or int(st._dwell_region) in uids
     cur = st.detector.current_attractor
-    assert cur is None or 0 <= int(cur) < n
-    dropped_after = int(getattr(st.grounding, "dropped_by_remap", 0))
-    print(f"       regions {n_before} -> {n}; every name inside {len(uids)} live "
-          f"uids (graph edges {len(st.graph)}); row ids inside [0, {n}); "
-          f"rows dropped: {dropped_after - dropped_before}")
+    assert cur is None or int(cur) in uids, (cur, len(uids))
+    assert all(int(u) in uids for u in st.detector.recent_sequence(k=8))
+    if st._rehearsal is not None:
+        assert all(int(u) in uids or int(u) == -1
+                   for u in st._rehearsal["predicted"]), st._rehearsal["predicted"]
+    print(f"       regions {n_before} -> {n}; every stored id inside {len(uids)} "
+          f"live uids (graph edges {len(st.graph)}, detector label {cur}, "
+          f"dwell {st._dwell_region})")
 
 
 def main() -> int:

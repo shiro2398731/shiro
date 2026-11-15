@@ -32,8 +32,10 @@ def _space(n: int = 4, dim: int = 8) -> StateSpace:
     ss = StateSpace(dim=dim)
     for i in range(n):
         a = Attractor(mu=np.full(dim, 2.0 * i), amp=0.5 + 0.1 * i, scale=0.5)
+        a.uid = i + 1
         a.members.extend([np.full(dim, 2.0 * i)] * 8)   # enough for a stable sigma
         ss._attractors.append(a)
+    ss._next_uid = n + 1
     return ss
 
 
@@ -58,8 +60,8 @@ def test_ignition_happens_when_she_moves_to_something_stronger() -> None:
     strong = ss.attractors()[3].mu.copy()
     got = ws.observe(ss, strong, "s")
     assert got is not None, "a stronger representation should ignite"
-    assert got.attractor_index == 3, got.attractor_index
-    print(f"       moved to region 3 -> ignited strength {got.strength:.3f}")
+    assert got.attractor_id == int(ss.attractors()[3].uid), got.attractor_id
+    print(f"       moved to region uid {got.attractor_id} -> ignited strength {got.strength:.3f}")
 
 
 def test_sustaining_ends_when_she_leaves_the_scale() -> None:

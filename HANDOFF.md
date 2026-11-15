@@ -23,13 +23,13 @@
 
 | 项 | 值 |
 |---|---|
-| 测试 | **35 个非空文件 / 201 例，全通过**（逐个 `python 文件` 运行；45 个文件 257–259 s） |
+| 测试 | **35 个非空文件 / 202 例，全通过**（逐个 `python 文件` 运行；45 个文件 234–259 s） |
 | 空占位 | `test_L0..L8.py`、`test_integration.py`、`__init__.py` 均为 0 字节，**不计入分母** |
 | 引擎版本 | `src/common/bundle.py: ENGINE_VERSION = "0.4.0"` |
 | 存档 | `data/state/l5.pkl`：570 区域、315 边、65 指代键、241 自模型符号、8978 KB、`tools/integrity.py` 报 `consistent` |
 | 本体包 | `her.bundle` 5.77 MB（6051423 B，gitignore） |
 | 进程 | 0（`shiro_alice` 名下；机器上两个 uv 缓存的 python 属 MCP 服务，勿杀） |
-| 远端 | **未推**：`origin/main` 停在 `a539ff0`；未推数量用 `git rev-list --count origin/main..HEAD` 现查（2026-11-14 实测 28）。直连 GitHub 8 s 内不足 1 KB/s、本地 10808/7890 均未监听 |
+| 远端 | **未推**：`origin/main` 停在 `a539ff0`；未推数量用 `git rev-list --count origin/main..HEAD` 现查（2026-11-14 实测 30）。网络诊断（同日 13:20）：`api.github.com`/`codeload` 通，`github.com:22` 通，但 DNS 把 `github.com` 解析到 `20.6.7.17` 而该 IP 的 443 超时；`140.82.112.3`/`140.82.114.3`/`140.82.116.3`/`20.27.177.113` 的 443 可达。没有管理员权限改 hosts，也没有 SSH 私钥（`~/.ssh` 不存在），HTTPS 凭据在（`git:https://github.com`，`x-access-token`）。 **白默 13:27 说直连也超时，暂时不折腾网络。** |
 
 已完成（16 项，详见 docs §2 与 `docs/2026-11-09_夜_本轮改动.md`）：时间锚与昏迷账本、回滚/昏迷分离记账、崩溃兜底与快速失败、
 出生深度尺度无关、原子落盘、L5 journal + 确定性重放、载体、唯一个体（epoch+fence）、
@@ -115,8 +115,10 @@
    `_last_symbol`、`_dwell_region`、进行中的预演预测；同一张表交给 `Consolidator.sync(graph, space, remap=)`。
    被删行整行丢弃并计数（`grounding.dropped_by_remap`），不猜归属。
    实测：删中间区域 → 图边 (0,1),(1,2),(2,3) 变为 (1,2)；指代表键 [1,2]；自模型键 [1]。
-   `tests/test_index_remap.py`（该项实现时 6 例；第 19 项把其中两例换成 uid 键化版本，现在 5 例）。
+   `tests/test_index_remap.py`（该项实现时 6 例；第 19/20/21 项把其中两例换成 uid 键化版本，现在 6 例）。
    表下标仍是位置性的；稳定 uid 见第 19 项（已完成）。
+   **2026-11-14 注：本节描述的整套重编号机制（`take_index_remap` / `_apply_index_remap` / `sync(remap=)`）
+   已随第 21 项整体删除**——存下来的 id 现在全是名字，没有号要改。留在这里作为"当时的正确解"。
 13. ~~**真跑一次验证（2026-11-13 夜）**~~ 已跑：700 步 / 约 6 分钟 / 约 1.9 步每秒，干净停止。
    过程中抓到两个真 bug：
    (a) **11-08 那份爆炸日志被每次启动重放**，往健康存档注入 1e306 的区域，P2 死于 non-finite。
@@ -178,12 +180,10 @@
        那它就是"我挑的偏好"=C3）。另有 AST 检查：`terrain.py`/`stream.py`/`self_model.py`/`grounding.py`/
        `trace.py`/`consolidate.py`/`recall.py`/`drive.py`/`identity.py` 九个模块里，`.uid` 不得出现在
        `BinOp`/`Compare`/`sorted|min|max` 内（赋值、字典键、集合成员是名字的正常用法，允许）。
-   `tests/test_uid.py` 7 例。`tools/integrity.py` 改成区分两种编号（图边/身份表/指代表/自模型 对照
-   `alive_uids()`，`_dwell_region`/detector 对照 `[0, 区域数)`），真存档 570 区域 / 315 边 / 65 指代键 /
-   241 自模型符号 → `consistent`。
-   **仍未做**：`attractor_id`（广播给 L6 / P3 / P4 的那个）与 detector、停留账本、预演序列仍用**行号**，
-   所以 `_apply_index_remap` 还在（第 20 项把图从这一组里拿出来了）；`fold_auto` 事实上永不触发
-   （判据换成容量后它是死代码，要么换判据要么标注）；L6 输入侧 grounding 未做。
+   `tests/test_uid.py` 7 例。`tools/integrity.py` 只查一种编号：所有存下来的 id 必须属于
+   `alive_uids()`（图边/身份表/指代表/自模型/`_last_symbol`/`_dwell_region`/detector 标签），
+   真存档 570 区域 / 315 边 / 65 指代键 / 241 自模型符号 → `consistent`。
+   **未做**：`fold_auto` 事实上永不触发（判据换成容量后它是死代码，要么换判据要么标注）；L6 输入侧 grounding 未做。
 20. ~~**图也用名字（uid）**~~ **已完成（2026-11-14）**：`TraceGraph` 的节点从"表下标"改成 uid。
    `prune(alive_uids)` 只删不加号，`merge_node` 不再平移其他节点，`relabel(perm)` 是唯一的改名入口
    （只给改名不变性测试与旧存档迁移用）。`Consolidator.sync(graph, space)` 丢掉 `remap` 参数，
@@ -197,7 +197,21 @@
    `tests/test_index_remap.py` 的图用例改成"删除只删边、不给幸存者改号"（删 uid 2 → 3 条边剩 1 条，
    一条都没被重编号）；`tests/test_uid.py` 加了改名后的连通权重/召回路径比对。
    单步成本：6.20 ms（改后）对 5.82 / 6.96 ms（改前两次），差异在噪声内。
-21. 规则级可塑性（需单独设计）。
+21. ~~**detector 与 `attractor_id` 也用名字**~~ **已完成（2026-11-14）**：`TransitionDetector.nearest_salient()`
+   现在返回 uid（几何按行号算，出模块前翻一次），`Transition.from_attractor/to_attractor`、
+   `recent_sequence()`、`_dwell_region`、预演序列、`GlobalWorkspace.Ignition.attractor_id`
+   （字段从 `attractor_index` 改名）全是名字。
+   **于是整张补丁表被删掉**：`StateSpace._index_remap` / `_publish_remap()` / `take_index_remap()`、
+   `Stream._apply_index_remap()`、`Consolidator.sync(remap=)` 全部消失——她身上不再有任何"跨步保存的行号"。
+   行号只剩一个出口：`nearest_attractor()` 与 `_nearest_normalized()`（并行数组的索引），
+   以及要用几何时现场查的 `uid_row()`。
+   顺着改掉的四处**混用**（都是同一个病：把一个行号当名字存下来）：
+   `recounter()` 的 `region` 与 `grounding.label(idx)`、`tools/integrity.py` 的 `_dwell_region`/detector 检查、
+   `tools/m4_audit.py` 的 `ignitions[ign.attractor_index]`（行号）与 `visits[aid]`（名字）对比、
+   `tests/test_region_numbering.py` 里"广播的 id 是表下标"的断言。
+   验收：`tests/test_index_remap.py` 6 例，其中新增"删掉她前面的一个区域 → 她的标签不变、行号
+   571→570"；全量 35 个非空文件 / 202 例全过（45 文件 234 s）；`tools/integrity.py` 对真存档报 `consistent`。
+22. 规则级可塑性（需单独设计）。
 
 
 ## 4. 硬约束（违反即回滚）
@@ -212,7 +226,7 @@
 ```powershell
 cd C:\neolaunchertest\3\bot-3021443116\shiro_alice
 $py = ".\.venv\Scripts\python.exe"
-foreach ($f in Get-ChildItem tests\test_*.py) { & $py $f 2>&1 | Select-Object -Last 1 }   # 35 非空文件 / 201 例，45 文件 257–259 s
+foreach ($f in Get-ChildItem tests\test_*.py) { & $py $f 2>&1 | Select-Object -Last 1 }   # 35 非空文件 / 202 例，45 文件 234–259 s
 git -C . log --oneline -1 ; git -C . status --short
 & $py tools\her.py doctor her.bundle
 ```

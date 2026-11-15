@@ -78,7 +78,7 @@ def run(steps: int = 1200, amplitude: float = 0.02, seed: int = 0) -> dict:
         ign = st._last_ignition
         if ign is not None:
             n_ign += 1
-            ignitions[int(ign.attractor_index)] += 1
+            ignitions[int(ign.attractor_id)] += 1
 
     salient = len(st.landscape.state_space.salient_indices())
     h_ign = _entropy(ignitions)

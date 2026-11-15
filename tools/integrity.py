@@ -11,10 +11,10 @@ tools/integrity.py — 她身上的一致性检查（只读）。
 
 检查项
 ------
-1. 编号：两种，不能混着查。
-   **名字（uid）**——图的两端与 `_last_node`、身份表、指代表的符号、自模型的键（**两端**）、
-   `_last_symbol`：必须属于当前活着的 uid 集合（不受区域数上界约束）。
-   **行号（下标）**——`detector.current_attractor`、`_dwell_region`：必须落在 `[0, 区域数)`。
+1. 编号：存下来的东西只该是**名字（uid）**——图的两端与 `_last_node`、身份表、指代表的符号、
+   自模型的键（**两端**）、`_last_symbol`、`_dwell_region`、detector 发布的标签。
+   它们必须属于当前活着的 uid 集合（不受区域数上界约束）。
+   行号只在"要读并行数组"的那一刻用 `uid_row()` 查，不跨步保存。
 2. 数值：质心有限且量级 < 1e6；深度有限、非负、不超过 ceiling。
 3. 计数一致：指代表的 `symbol_totals`/`context_totals`/`total` 必须能由 counts 重算出来；
    自模型同理。
@@ -52,27 +52,19 @@ def check(stream, journal_path: str | None = "data/journal/l5.wal") -> list[str]
     if n == 0:
         return ["no regions at all"]
 
-    def _idx(name: str, value) -> None:
-        try:
-            v = int(value)
-        except (TypeError, ValueError):
-            problems.append(f"{name}: not an integer ({value!r})")
-            return
-        if not (0 <= v < n):
-            problems.append(f"{name}={v} outside [0, {n})")
-
-    # 1. every stored region id -- and there are two kinds now
+    # 1. every stored region id is a **name**, and there is only one kind now
     #
-    #   uids     graph edges and `graph._last_node`, identity table, grounding,
-    #            self-model, `_last_symbol`.  A name, stable across merges and
-    #            restarts. Legal values are the live uids, which are NOT bounded
-    #            by the region count (uid 400 of 300 regions is fine, that just
-    #            means 100 regions were folded before it).
-    #   indices  detector.current_attractor, _dwell_region.  Positions: legal
-    #            values are [0, n).
+    #    graph endpoints and `_last_node`, the identity table, the grounding
+    #    table, the self-model (both ends), `_last_symbol`, `_dwell_region` and
+    #    the detector's label all store `Attractor.uid`. Legal values are the
+    #    live uids, which are NOT bounded by the region count (uid 400 with 300
+    #    regions is fine -- it means 100 regions were folded before it).
     #
-    # Checking a uid against the count (or an index against the uid set) would
-    # report nonsense; keeping the two apart is the whole point of the change.
+    #    Rows still exist, but nothing stores one across a step: they are looked
+    #    up with `uid_row()` at the moment the numbers are needed. Until
+    #    2026-11-14 the detector and `_dwell_region` stored rows and needed an
+    #    old->new map after every structural change; that map is gone, and so is
+    #    the failure mode of missing an entry in it.
     alive = space.alive_uids()
 
     def _uid(name: str, value) -> None:
@@ -102,10 +94,10 @@ def check(stream, journal_path: str | None = "data/journal/l5.wal") -> list[str]
     if stream._last_symbol is not None:
         _uid("stream._last_symbol", stream._last_symbol)
     if getattr(stream, "_dwell_region", None) is not None:
-        _idx("stream._dwell_region", stream._dwell_region)
+        _uid("stream._dwell_region", stream._dwell_region)
     det = getattr(stream, "detector", None)
     if det is not None and getattr(det, "_current", None) is not None:
-        _idx("detector.current", det._current)
+        _uid("detector.current", det._current)
     for (a, b) in getattr(stream.identity, "_appear", {}):
         _uid("identity.appear.a", a)
         _uid("identity.appear.b", b)
@@ -213,7 +205,7 @@ def main(argv: list[str]) -> int:
         for p in problems[:40]:
             print("  -", p)
         return 1
-    print("consistent: every stored region id is in range, counts add up, no poisoned record")
+    print("consistent: every stored region id is a live name, counts add up, no poisoned record")
     return 0
 
 

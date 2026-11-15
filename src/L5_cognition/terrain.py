@@ -349,18 +349,6 @@ class StateSpace:
         # number after a restart.
         self._next_uid: int = 1
 
-        # old index -> new index for the most recent structural change
-        # (removal in recover(), merge, fold). Consumed with take_index_remap().
-        #
-        # Why this exists: region ids are positional, so removing one entry
-        # shifts every later one. Anything that stores a region id outside this
-        # list -- graph edges, the grounding table, the self-model, the symbol
-        # broadcast to L6 -- silently starts pointing at a different region.
-        # `Consolidator.sync` used to "fix" the graph by keeping edges with
-        # index < new_length, which is only correct when the *last* regions are
-        # the ones that vanished.
-        self._index_remap: Optional[dict[int, int]] = None
-
         # 追加式日志（src/common/journal.py）。为 None 时不记录。
         # 记的是'她经历了什么'，不是'她成了什么样'——后者由重放算出来。
         self.journal = None
@@ -940,23 +928,10 @@ class StateSpace:
         a._sigma_cache = None
         before = len(self._attractors)
         del self._attractors[j]
-        self._publish_remap(before, [i for i in range(before) if i != j])
         self._invalidate_scale()
         return True
 
     # ---------- identity under structural change ----------
-
-    def _publish_remap(self, before: int, kept: list[int]) -> None:
-        """Record old->new for the indices that survived a structural change."""
-        if len(kept) == before:
-            return
-        self._index_remap = {old: new for new, old in enumerate(kept)}
-
-    def take_index_remap(self) -> Optional[dict[int, int]]:
-        """Return and clear the last old->new map (None when nothing moved)."""
-        m = self._index_remap
-        self._index_remap = None
-        return m
 
     # Compatibility alias.
     def _prune(self) -> None:
@@ -1083,7 +1058,6 @@ class StateSpace:
         before = len(self._attractors)
         removed = before - len(keep)
         self._attractors = keep
-        self._publish_remap(before, [i for i in range(before) if i not in drop])
         self._invalidate_scale()
         return removed
 
@@ -1276,7 +1250,6 @@ class StateSpace:
             # 之前用 default_rng() 无种子，重放结果不可能一致，durable replay 无从谈起。
             rng = np.random.default_rng(self._total_steps)
         r = self.recover_rate
-        every = max(int(self._recover_every_hint), 1)
         if self.journal is not None:
             self.journal.append_recover(int(self._total_steps))
 
@@ -1288,8 +1261,7 @@ class StateSpace:
 
         total = max(self._total_steps, 1)
         alive: List[Attractor] = []
-        kept_old: List[int] = []
-        for old_i, a in enumerate(self._attractors):
+        for a in self._attractors:
             if a._decay_factor is None:
                 a._decay_factor = max(
                     float(1.0 + rng.normal(0.0, self.decay_spread)), 0.05
@@ -1312,11 +1284,8 @@ class StateSpace:
             a.amp *= max(1.0 - rate, 0.0)
             if a.amp >= self.min_amp:
                 alive.append(a)
-                kept_old.append(old_i)
-        before = len(self._attractors)
-        if len(alive) != before:
+        if len(alive) != len(self._attractors):
             self._invalidate_scale()
-            self._publish_remap(before, [int(i) for i in kept_old])
         self._attractors = alive
         self._apply_scale_floor()
 
@@ -1351,26 +1320,30 @@ class StateSpace:
         return np.array([a.amp for a in self._attractors], dtype=float)
 
     def nearest_attractor(self, x: np.ndarray) -> Optional[tuple[int, float]]:
-        """Nearest salient attractor: **(index into the attractor table, distance)**.
+        """Nearest salient attractor: **(row in the attractor table, distance)**.
 
-        One convention, deliberately
-        ----------------------------
-        This codebase had three numberings for "a region":
+        The one place that answers in rows
+        ----------------------------------
+        The geometry lives in parallel arrays, so the search is done by row and
+        a row is what comes back. Every caller that has to *name* a region --
+        the graph, the detector's label, M1's symbol, the grounding table, the
+        self-model -- converts once, at the point where the number leaves this
+        module, and stores `Attractor.uid` instead.
 
-            the `_attractors` table        <- graph nodes, M1's symbol, this function
-            the `salient()` subset         <- what this function used to return
-            whatever the caller invents    <- ...
+        The history is worth keeping: this codebase once had three numberings
+        for "a region" and treated them as interchangeable.
 
-        They are not interchangeable, and mixing them produced real wrong
-        answers three times in one night (grounding scored MI = 1.0240 against a
-        probe's 0.7395 on the same data; recounter nearly read the wrong region;
-        and the "attractor_id" broadcast to L6 was a salient index while the
-        graph was keyed on table indices). Every exposed index is now a table
-        index; `salient_indices()` gives the subset in that same space.
+            the `_attractors` table      <- rows (this function, parallel arrays)
+            the `salient()` subset       <- what this function used to return
+            whatever the caller invented <- ...
 
-        Identity is still positional: entries shift when a merge or a deletion
-        removes one. That is the next thing to fix (a stable id per region);
-        this change removes the cross-convention errors, not that one.
+        Mixing them produced real wrong answers in one night (grounding scored
+        MI = 1.0240 against a probe's 0.7395 on the same data; recounter nearly
+        read the wrong region; `attractor_id` broadcast to L6 was a salient index
+        while the graph was keyed on table indices). Then positional identity
+        itself turned out to be the bug: removing one region shifted every later
+        one, so anything storing an id was one missed patch away from pointing at
+        a neighbour. `uid` is what survives that; rows are what the arrays need.
         """
         idx = self.salient_indices()
         if not idx:

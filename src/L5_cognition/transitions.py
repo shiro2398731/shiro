@@ -75,15 +75,27 @@ class TransitionDetector:
         self.history: list[Transition] = []
 
     def nearest_salient(self, x: np.ndarray) -> Optional[int]:
-        """Index of the nearest salient region -- **index into the attractor table**.
+        """The region nearest to `x` among the salient ones -- as a **uid**.
 
-        Same convention as `StateSpace._nearest_normalized` and `graph.touch`.
+        The geometry is answered in rows (parallel arrays, nearest-neighbour
+        search) and translated once, here. The detector publishes names because
+        everything downwind of it does: a row means "wherever that region sits
+        today", so a broadcast row would label a different region after any
+        structural change, and `attractor_id` -- the one thing L6 is allowed to
+        read -- would silently come to mean somewhere else.
+
         Before 2026-11-12 this returned an index into the salient *subset*,
         which is a different number for the same region as soon as one more
         region becomes salient.
         """
         n = self.state_space.nearest_attractor(x)
-        return None if n is None else n[0]
+        if n is None:
+            return None
+        row = int(n[0])
+        attrs = self.state_space.attractors()
+        if not (0 <= row < len(attrs)):
+            return None
+        return int(attrs[row].uid)
 
     # Compatibility alias.
     def assign(self, x: np.ndarray) -> Optional[int]:

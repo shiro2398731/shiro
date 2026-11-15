@@ -57,8 +57,9 @@ class SymbolBundle:
     """
     The only symbols L5 exposes to L6.
 
-    attractor_id is the index of the nearest salient attractor, or "none".
-    It carries no semantic content.
+    attractor_id is the name (uid) of the nearest salient region, or "none".
+    It carries no semantic content -- and it is a name, not a position, so it
+    keeps meaning the same region after the table has been restructured.
 
     referent is a discrete label for what that region has most often meant in
     her own terms (see grounding.GroundingTable): a code for where two measured
@@ -342,10 +343,9 @@ class Stream:
         # L6 grounding: record which region this is *and* where two measured
         # quantities sat inside her own history at the same moment. Done at the
         # end of the step, on purpose: the symbol has to be the one L6 will
-        # receive (`detector.current_attractor`), not the index in the attractor
-        # list. Measured with the list index instead, the engine's table scored
-        # MI = 1.0240 bits while a probe keyed on the broadcast id scored 0.7395
-        # -- two different numberings of the same regions.
+        # receive. Measured with the attractor-list index instead, the engine's
+        # table scored MI = 1.0240 bits while a probe keyed on the broadcast id
+        # scored 0.7395 -- two different numberings of the same regions.
         #
         # Both buckets are None until her history is long enough, and an
         # unmeasured context is not counted as "low".
@@ -385,15 +385,10 @@ class Stream:
             else:
                 self.landscape.state_space.set_wall(None)
 
-        # 结构可能变了（recover 删过区域、或刚刚合并过）：先把旧->新编号取出来。
-        # 存着**行号**的地方仍然需要它（detector、停留账本、预演序列）；图与指代表
-        # 存的是名字，不需要改号。
-        _remap = self.landscape.state_space.take_index_remap()
-        if _remap is not None:
-            self._apply_index_remap(_remap)
-
-        # Attractor count may have changed through recovery or merging. The
-        # graph only has to drop the regions that are gone.
+        # 结构可能变了（recover 删过区域、或刚刚合并过）。现在**没有编号要改**：
+        # detector 发布的是区域的名字，图与指代表存的是名字，预演序列也是名字。
+        # 只剩"按行号读几何"的地方（`_apply_leave`、P2 的快照）在要用的时候
+        # 现场查 `uid_row()`，所以不需要一张事后补丁表。
         self.consolidator.sync(self.graph, self.landscape.state_space)
 
         # Workspace: read-only.
@@ -411,38 +406,16 @@ class Stream:
             self._st, datetime.now(timezone.utc).isoformat()
         )
 
-        # L6 grounding, second half: the symbol is the id the detector just
+        # L6 grounding, second half: the symbol is the region the detector just
         # published, and the context was measured above, in the same step.
         aid = self.detector.current_attractor
         if aid is not None and b_speed is not None and b_tension is not None:
-            _attrs = self.landscape.state_space.attractors()
-            if 0 <= int(aid) < len(_attrs):
-                self.grounding.observe(int(_attrs[int(aid)].uid), (b_speed, b_tension))
+            self.grounding.observe(int(aid), (b_speed, b_tension))
 
         # 记忆回路的结算：这一步实际到了哪里，走满预演步数后打分
         self._settle_rehearsal()
 
         return ev
-
-    # ---------- 区域重编号 ----------
-
-    def _apply_index_remap(self, remap: dict) -> None:
-        """结构变化后，把还存着**行号**的地方改号。
-
-        现在只剩三处存行号：detector 的当前区域、停留账本 `_dwell_region`、
-        进行中的预演序列。它们都是"表里的第几行"，本来就会随表变化，所以需要这张表。
-        图、指代表、自模型、`_last_symbol` 存的是区域的名字（uid），不动。
-        """
-        for attr in ("_dwell_region",):
-            old_i = getattr(self, attr, None)
-            if old_i is not None:
-                setattr(self, attr, remap.get(int(old_i)))
-        cur = getattr(self.detector, "_current", None)
-        self.detector._current = None if cur is None else remap.get(int(cur))
-        pending = self._rehearsal
-        if pending is not None:
-            pending["predicted"] = [remap.get(int(i), -1) for i in pending["predicted"]]
-            pending["start"] = remap.get(int(pending["start"]), -1)
 
     # ---------- 记忆回路 ----------
 
@@ -590,13 +563,18 @@ class Stream:
     def _apply_leave(self) -> None:
         """背离当前区域质心挪一步：一步最多一个区域半径。"""
         node = self.detector.current_attractor
-        attrs = self.landscape.state_space.attractors()
-        if node is None or not (0 <= int(node) < len(attrs)):
+        space = self.landscape.state_space
+        # The detector publishes a name; the centroid lives in a row. Look the
+        # row up now, when it is needed, instead of keeping a second copy of
+        # the identity that has to be renumbered after every structural change.
+        row = None if node is None else space.uid_row().get(int(node))
+        if row is None:
             return
         scale = self._own_scale()
         if scale is None:
             return
-        d = self.actions.direction(self._st.x, attrs[int(node)].mu, scale)
+        attrs = space.attractors()
+        d = self.actions.direction(self._st.x, attrs[row].mu, scale)
         if d is not None:
             self._st = DynamicState(x=self._st.x + d, v=self._st.v)
 
@@ -683,11 +661,6 @@ class Stream:
         """The only thing L6 receives. No vectors, no continuous quantities."""
         aid = self.detector.current_attractor
         seq = self.detector.recent_sequence(k=8)
-        # The referent table is keyed by uid, so the index must be translated
-        # before it can be asked. An index the table does not cover means no
-        # measurable referent -- "none", not a guess.
-        attrs = self.landscape.state_space.attractors()
-        i = int(aid) if aid is not None else -1
         return SymbolBundle(
             attractor_id=str(aid) if aid is not None else "none",
             transition_seq=[str(s) for s in seq],
@@ -695,6 +668,6 @@ class Stream:
             t_event=datetime.now(timezone.utc).isoformat(),
             # A label, not a number: the region's most usual position in her
             # own measured context, or "none" when that is not yet measurable.
-            referent=(self.grounding.label(int(attrs[i].uid))
-                      if 0 <= i < len(attrs) else "none"),
+            referent=(self.grounding.label(int(aid))
+                      if aid is not None else "none"),
         )
