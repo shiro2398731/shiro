@@ -77,7 +77,7 @@ def beat_age(tag: str, now: Optional[float] = None) -> Optional[float]:
     return max((time.time() if now is None else now) - mtime, 0.0)
 
 
-def _below_normal(pid: int) -> None:
+def below_normal(pid: int) -> None:
     """把新进程降到 BelowNormal。子进程继承优先级类，所以设跳板就够。
 
     为什么要降：这台机器上还有别人的训练在跑（实测 `vlmdisaster` 的 train.py 占 1.8 GB 内存、
@@ -109,7 +109,7 @@ def start_module(tag: str) -> int:
         kwargs["start_new_session"] = True
     proc = subprocess.Popen([str(PY), "-m", module], **kwargs)
     log.close()
-    _below_normal(proc.pid)
+    below_normal(proc.pid)
     return int(proc.pid)
 
 

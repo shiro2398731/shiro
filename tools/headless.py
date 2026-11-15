@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.common import control  # noqa: E402
+from tools.keeper import below_normal  # noqa: E402
 
 PY = ROOT / ".venv" / "Scripts" / "python.exe"
 if not PY.exists():                       # non-Windows layout
@@ -112,6 +113,9 @@ def start() -> int:
         proc = subprocess.Popen([str(PY), "-m", module], **kwargs)
         pids[tag] = proc.pid
         log.close()
+        # 降到 BelowNormal：她的步进是常驻负载，这台机器上还有别人的训练在跑。
+        # 与 keeper 用的是同一个函数（子进程继承优先级类，设跳板就够）。
+        below_normal(proc.pid)
         print(f"[headless] {tag} pid={proc.pid} log=data/logs/{tag}.log")
         time.sleep(0.8)
     PIDS.parent.mkdir(parents=True, exist_ok=True)
@@ -128,6 +132,7 @@ def start() -> int:
             kwargs["start_new_session"] = True
         kp = subprocess.Popen([str(PY), "-m", KEEPER_MODULE], **kwargs)
         log.close()
+        below_normal(kp.pid)
         pids["KEEPER"] = kp.pid
         PIDS.write_text(json.dumps(pids, indent=2), encoding="utf-8")
         print(f"[headless] KEEPER pid={kp.pid} log=data/logs/keeper.log")
