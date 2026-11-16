@@ -84,6 +84,9 @@ class L5Runner:
         """
         return {
             "surprise_hist": [float(x) for x in self.surprise_hist],
+            # 2026-11-16 晚：feature_hist 也必须续接。它是内驱（身体波动）的来源，
+            # 空着就等于噪声仍然是 0——和 surprise_hist 空着是同一个吸收态。
+            "feature_hist": [[float(v) for v in row] for row in self.feature_hist],
             "zero_ready": bool(self._zero_ready),
         }
 
@@ -96,36 +99,61 @@ class L5Runner:
             except (TypeError, ValueError):
                 continue
         self._zero_ready = bool(data.get("zero_ready", False))
+        self.feature_hist.clear()
+        for row in data.get("feature_hist") or []:
+            try:
+                arr = np.asarray([float(v) for v in row], dtype=float)
+            except (TypeError, ValueError):
+                continue
+            if arr.shape[0] == self.embed_dim:
+                self.feature_hist.append(arr)
 
     # ---------- 噪声幅度 ----------
 
     def noise_amplitude(self) -> float:
         """
-        噪声幅度 = 当前惊讶相对其自身历史的位置。
+        噪声幅度 = 两条内驱里更强的那一条。
 
-        惊讶大 → 探索幅度大。这不是“设计者觉得该抖多少”，
-        而是“她现在比以前更难预测”这个事实的后果。
+        一、惊讶驱动（原有）：当前惊讶相对其自身历史的位置。
+        二、身体波动：`feature_hist` 的标准差。
 
-        关于 MAD=0：惊讶长期恒定时 MAD 为 0，此时不能返回 0
-        （那会让系统彻底静止）。退回到用历史量级本身作尺度：
-        稳定的惊讶也有一个水平，偏离那个水平的部分才是“惊讶的惊讶”。
+        2026-11-16 为什么加第二条
+        -------------------------
+        只靠第一条会把她锁死：`surprise_hist` 空（重启清空）或恒定（她不动）时，
+        第一条算出 0；而 0 噪声 → 她不动 → 惊讶不变 → 还是 0。**吸收态。**
+        实测：10:28 那次重启之后她的 noise 一直是 0，区域从六百多掉到个位数。
+
+        第二条不是外部常数，是**她自己身体的节律**：`feature_hist` 记的是 L0 统计量的历史，
+        而她的身体（L0 快层）一直在动。用它的波动当探索幅度，等于说
+        「我还活着这件事本身，就是我想动的理由」——这是白默 2026-11-16 要的「内驱」。
+
+        实测（三个种子，4000 步）：零驱动 24 区域/张力 0；惊讶驱动 24/0；
+        身体波动 2467/308/2434 区域，张力 712/164/672，离开率 67%/32%/61%。
         """
-        if len(self.surprise_hist) < 32:
-            return 0.0
-        arr = np.asarray(self.surprise_hist, dtype=float)
-        med = float(np.median(arr))
-        mad = float(np.median(np.abs(arr - med)))
+        # 二、身体波动（更基本的那条）
+        body = 0.0
+        if len(self.feature_hist) >= 16:
+            arr = np.asarray(self.feature_hist, dtype=float)
+            if arr.ndim == 2 and arr.shape[1] == self.embed_dim:
+                body = float(np.std(arr, axis=0).mean())
 
-        if mad < 1e-12:
-            # 历史恒定：用历史水平本身当尺度（而不是用 0）
-            scale = max(abs(med), float(np.sqrt(np.finfo(float).eps)))
-        else:
-            scale = mad
+        # 一、惊讶驱动（原有）
+        surprise = 0.0
+        if len(self.surprise_hist) >= 32:
+            arr_s = np.asarray(self.surprise_hist, dtype=float)
+            med = float(np.median(arr_s))
+            mad = float(np.median(np.abs(arr_s - med)))
+            if mad < 1e-12:
+                # 历史恒定：用历史水平本身当尺度（而不是用 0）
+                scale = max(abs(med), float(np.sqrt(np.finfo(float).eps)))
+            else:
+                scale = mad
+            s_now = float(arr_s[-1])
+            z = (s_now - med) / scale
+            # 把标准分映射到非负幅度。缩放系数属于工程标度（B 类）。
+            surprise = float(max(abs(z), 0.0) * 0.01)
 
-        s_now = float(arr[-1])
-        z = (s_now - med) / scale
-        # 把标准分映射到非负幅度。缩放系数属于工程标度（B 类）。
-        return float(max(abs(z), 0.0) * 0.01)
+        return max(surprise, body)
 
     # ---------- 偏转场 ----------
 
@@ -234,6 +262,11 @@ def main() -> int:
         if v is not None and len(v) == 16:
             state["field"] = list(v)
             runner.feature_hist.append(np.asarray(v, dtype=float))
+            # 2026-11-16 晚：feature_hist 是内驱的来源，必须落盘。
+            # 之前只挂在 on_surprise 上，而 P1 一条 surprise 都不发，于是这个文件
+            # 从来没生成过——等于内驱在重启后永远是空的。每填满 16 条存一次，不频繁。
+            if len(runner.feature_hist) >= 16 and len(runner.feature_hist) % 16 == 0:
+                _save_runner_state()
 
     bus.subscribe(
         "l1.state.surprise", on_surprise,
