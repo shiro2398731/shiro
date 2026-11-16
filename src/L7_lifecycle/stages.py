@@ -239,3 +239,26 @@ class StageMonitor:
     @property
     def history(self) -> list[tuple[str, int]]:
         return list(self._history)
+
+    # ---------- persistence ----------
+    # 2026-11-16: 阶段之前没有落盘。P3 每次重启都新建 StageMonitor，`_current`
+    # 从 0 开始——于是 events.jsonl 里出现 4 -> 0（15:35 mature，16:21 又回到 0）。
+    # ARCHITECTURE §8 写的是「阶段转换单向、没有退行机制」，那要求它能跨重启成立。
+    #
+    # 阶段只被记录、不控制任何层（本文件开头那句），所以补持久化不改变她的行为，
+    # 只是让"她走到哪了"这个事实不再随重启归零。
+
+    def to_dict(self) -> dict:
+        return {
+            "current": int(self._current),
+            "history": [[str(t), int(i)] for t, i in self._history],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StageMonitor":
+        mon = cls()
+        mon._current = int(data.get("current", 0))
+        for item in data.get("history") or []:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                mon._history.append((str(item[0]), int(item[1])))
+        return mon

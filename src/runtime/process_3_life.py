@@ -20,6 +20,7 @@ L3 / L8 are not implemented.
 from __future__ import annotations
 
 import collections
+import json
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", "..")))
 
@@ -31,6 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
+from src.common import atomics
 from src.common.bus import Bus
 from src.common.homeostasis import Homeostasis
 from src.common.observe import Observer
@@ -52,7 +54,33 @@ def main() -> int:
 
     bus = Bus("P3")
     witness = PhaseWitness()
+    # 阶段跨重启延续（2026-11-16）。之前每次 P3 新建 StageMonitor、_current 从 0 起，
+    # events 里于是出现 4 -> 0；ARCHITECTURE §8 要求转换单向、没有退行。
+    # 阶段只被记录、不控制任何层，所以这里只是把「她走到哪了」这个事实留住。
+    _stage_path = Path("data/state/stage.json")
     stages = StageMonitor()
+    try:
+        if _stage_path.exists():
+            stages = StageMonitor.from_dict(
+                json.loads(_stage_path.read_text(encoding="utf-8")))
+            print(f"[P3] stage resumed: {stages.current} ({stages.stage_def().name})")
+    except Exception as e:  # noqa: BLE001
+        print(f"[P3] stage load failed, starting from 0: {e}")
+        stages = StageMonitor()
+
+    def _save_stage() -> None:
+        try:
+            _stage_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = atomics.unique_tmp(_stage_path)
+            tmp.write_text(json.dumps(stages.to_dict(), ensure_ascii=False),
+                           encoding="utf-8")
+            atomics.replace_with_retry(tmp, _stage_path)
+        except Exception as e:  # noqa: BLE001
+            print(f"[P3] stage save failed: {e}")
+
+    # 启动就落一次盘：否则一个停在 stage 0 的会话不会写文件，下次重启还是"没有记录"。
+    _save_stage()
+
     homeo = Homeostasis()
     observer = Observer("P3", log_dir)
 
@@ -198,6 +226,7 @@ def main() -> int:
                     "from": prev, "to": idx,
                     "name": stages.stage_def().name,
                 })
+                _save_stage()
 
             # 闭环：只记录
             rep = homeo.closure()
