@@ -59,8 +59,10 @@ def evaluate(seq: list[int], shuffle_seed: int | None = None) -> dict:
     m = OnlineSelfModel()
     seen: collections.Counter = collections.Counter()
     n = 0
-    hits = {"model": 0, "same": 0, "marginal": 0}
-    bits = {"model": 0.0, "same": 0.0, "marginal": 0.0}
+    hits = {"model": 0, "same": 0, "marginal": 0, "same_freq": 0}
+    bits = {"model": 0.0, "same": 0.0, "marginal": 0.0, "same_freq": 0.0}
+    same_hits = 0
+    trans = 0
     prev = None
 
     for cur in s:
@@ -91,8 +93,23 @@ def evaluate(seq: list[int], shuffle_seed: int | None = None) -> dict:
             hits["marginal"] += int(top == cur)
             bits["marginal"] += -math.log2(p_marg)
 
+            # --- same_freq: the strong 0th-order rule ---
+            # 2026-11-16: 上面那条 `same` 用「先验频率」估 P(下一跳=当前)，它把
+            # 「她不动」估得极低（真实值 0.79，它给 0.05 量级），于是基线弱成
+            # 5.3 bits，模型赢它没有意义。这条用**在线估计的同名频率**：
+            # 单独统计「下一步是否等于当前」，二分类平滑。实测真存档上模型
+            # 3.15 bits 对这条 2.13 bits —— 模型输。两个基线都要印。
+            q_sf = (same_hits + SMOOTHING) / (trans + SMOOTHING * 2)
+            q_sf = min(max(q_sf, 0.02), 0.98)
+            p_sf = q_sf if cur == prev else (1.0 - q_sf) / max(vocab - 1, 1)
+            hits["same_freq"] += int(cur == prev)
+            bits["same_freq"] += -math.log2(max(p_sf, 1e-12))
+
             n += 1
 
+        if prev is not None:
+            trans += 1
+            same_hits += int(cur == prev)
         seen[cur] += 1
         if prev is not None:
             m.observe(prev, cur)
@@ -152,13 +169,17 @@ def main(argv: list[str]) -> int:
         d = r[cond]
         print(f"{cond}:")
         print(f"  {'predictor':<10}{'accuracy':>12}{'bits/transition':>18}")
-        for k in ("model", "same", "marginal"):
+        for k in ("model", "same", "same_freq", "marginal"):
             print(f"  {k:<10}{d['accuracy'][k]:>12.4f}{d['bits_per_transition'][k]:>18.4f}")
     print(f"engine's own counters: accuracy={r['engine_model']['accuracy']:.4f}  "
           f"bits={r['engine_model']['bits_per_observation']:.4f}  "
           f"(prequential over {r['engine_model']['scored']} transitions)")
     print("Verdict rule: accuracy is dominated by dwell; the model must win on BITS,")
     print("              and must lose that advantage when the sequence is shuffled.")
+    print("两条 same 基线不是一回事：`same` 用先验频率估 P(不动)，弱得没有意义；")
+    print("`same_freq` 用在线同名频率，才是 0 阶规则该有的强度。判据必须对着它看。")
+    print("2026-11-16 实测：model 3.0141 对 same_freq 2.1561 —— 模型输；")
+    print("打乱后 model 6.4112 / same_freq 6.6024，说明它确实携带结构，只是不够赢。")
     return 0
 
 
