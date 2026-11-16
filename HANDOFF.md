@@ -313,3 +313,64 @@ git -C <repo> -c http.proxy= push origin main:alice
 1. `Get-NetTCPConnection -LocalPort 10808 -State Listen` → 代理端口是否在
 2. `git -c http.proxy= ls-remote origin` → 直连是否通
 3. 直连通 → 用直连；直连不通 → `Resolve-DnsName github.com` 看是否解析到 `20.205.243.166`（该 IP 常不通），必要时换代理节点
+
+---
+
+## 6. 接手诊断（2026-11-16 00:35，小灯，上一任 agent 崩后）
+
+**现场**：`tools/integrity.py` 运行态报 **33772 个** `grounding.symbol=X is not a live uid`。
+区域 1074 / 边 998 / 指代键 3772 / 自模型符号 6326（HANDOFF §2 记的是 651 / 390 / 115 / 310）。
+
+**成因**：容量折叠 2026-11-15 14:55 起真触发（`fold_to_capacity`，`events.jsonl` 有 `fold` 事件，
+removed 40–200/次，live 在 874–1060 摆动）。区域折叠后 uid 从 `alive_uids()` 消失，
+但 `Consolidator.sync` 只剪 `TraceGraph` 的边，**没有对 `grounding` / `self_model` 做同样的剪枝**
+——这两个模块根本没有 `prune` 方法。uid 改造（第 19–21 项）只做了"名字不重编号"，
+没做"名字死了要从所有账本里销掉"。
+
+**未决**：补 prune 之后，grounding 的转移靶增益（原记 +2.6099 / +3.3325 bits，78.3%）
+必须重测，不能沿用旧数字——死 uid 被清掉后参与统计的样本变了。
+
+**未提交（可提交，已实测）**：`src/common/atomics.py`（新）、`tests/test_atomic_save.py`（新），
+以及 `coma.py` / `epoch.py` / `persist.py` 改用 pid+线程唯一 tmp 名 + replace 短重试。
+2026-11-16 实测 `tests/test_atomic_save.py` **5/5 通过**。这是上一任崩之前的完整工作。
+
+**下一步（按序）**：① 提交上面这笔；② 给 grounding / self_model 补 `prune(alive_uids)` 并接进
+P2 的 fold 路径；③ 存档副本上重测指代增益；④ 全量 36 文件 / 207 例；⑤ 性能那条（9 ms/步，100 s→249 s）另开一项。
+
+---
+
+## 7. 修复记录：折叠后不剪枝（2026-11-16 上午，小灯）
+
+### 改了什么
+
+1. **三个 prune**：`GroundingTable.prune(alive)`、`OnlineSelfModel.prune(alive)`、`Identity.prune(alive)`。
+   按 uid 集合删掉已不存在的条目；grounding 的 `total` / `symbol_totals` / `context_totals`
+   同时重算；累计量（`nll_bits` / `hits` / `observations` / `conf_*`）**一律不动**——那是历史。
+2. **`Stream.step()`**：区域数变**少**时（recover / merge / fold 都会），同步剪这三张表。
+   信号只取「变少」：新增区域几乎每步都有，拿它当信号等于每步扫一遍整张表。
+   代价是「一步内删一个又生一个」会漏剪一次，下一次真删除会补上。
+3. **P2 两处**：fold 之后剪一次；启动时剪一次（清理上一版遗留的死账，没有死 id 时是 no-op）。
+
+### 实测
+
+- 存档副本：**34425 → 0**（grounding 3229 + self_model 5576 + identity 5157 行）
+- P2 重启后的 `startup_prune` 事件：grounding 3321 / self_model 5708 / identity 5186
+- 落盘后 `tools/integrity.py`：**consistent**
+  （区域 1087 / 边 999 / 指代键 648 / 自模型符号 874）
+- `l5.pkl` 19.2 MB → 18.93 MB
+- `tests/test_fold_prune.py` **8/8**；`test_index_remap.py` **6/6**；`test_uid.py` **7/7**
+- 单步成本 **25.54 ms**；撤掉本次改动后基线 **24.56 ms** —— 差在噪声内。
+  **性能本来就已经退到 24.5 ms（文档记的是 6.20 ms），是既有问题，不是本次引入。**
+
+### 两个新坑
+
+- 折叠时 `edges_dropped=0`：图在 step 里已经 sync 过，那次剪枝没删到边。但
+  「折叠 → 落盘」之间如果不补一次 sync，存档会带死边（副本上实测到过）。已在 P2 fold 路径补上。
+- `test_uid.py` / `test_index_remap.py` 读**实时存档**，P2 每 60 秒落盘会替换文件 →
+  偶发 `renaming changed her trajectory`。不是代码问题，是测试的竞态；重跑即可。
+
+### 仍未做
+
+- `terrain.recover()` 的 interval 仍用 `total/_assigned`，与已改掉的 `_birth_depth` 同源，未修。
+- 性能 24.5 ms/步未定位（与文档 6.20 ms 差 4 倍）。
+- 预算 20 MB、当前 18.93 MB，余量只够约 60 个区域，很快会再折一次。

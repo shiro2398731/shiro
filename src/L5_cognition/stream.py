@@ -144,6 +144,10 @@ class Stream:
         # Lives here, not in L6, because it needs continuous quantities (speed,
         # tension) that L6 is not allowed to receive. L6 gets only the label.
         self.grounding = GroundingTable()
+        # 上一次看到的区域数。只有它变**少**了才剪指代表与自模型（见 step()）。
+        # 新增区域不会让已有键失效，而新区域几乎每步都可能出现——拿它当信号
+        # 会让每步都做一次 O(表大小) 的扫描。
+        self._structure_n = None
 
         # ---- 行动：她能做的一件事（留在原处 / 离开）----
         # 选择权在她自己手里（判据只用她自己的张力中位数，见 action.py）；
@@ -390,6 +394,23 @@ class Stream:
         # 只剩"按行号读几何"的地方（`_apply_leave`、P2 的快照）在要用的时候
         # 现场查 `uid_row()`，所以不需要一张事后补丁表。
         self.consolidator.sync(self.graph, self.landscape.state_space)
+
+        # 折叠与 recover 都会删区域，uid 随之从 alive 集合里消失。指代表与自模型
+        # 是按 uid 记账的，不跟着剪就会给一个她已经没有了的区域继续记账
+        # （2026-11-16 实测：区域 1087、指代键 3862、自模型符号 6447，
+        # integrity 报 33772 条 dead uid）。
+        # 触发信号只取「区域数变少」：新增不会让已有键失效，而新区域几乎每步都
+        # 可能出现；拿它当信号会让每一步都扫一遍整张表。代价是「一步之内删一个
+        # 又生一个」会漏剪一次——下一次真正的删除会补上，不会累积成悬空。
+        _space = self.landscape.state_space
+        _n = len(_space.attractors())
+        _shrank = self._structure_n is not None and _n < self._structure_n
+        self._structure_n = _n
+        if _shrank:
+            _alive = _space.alive_uids()
+            self.grounding.prune(_alive)
+            self.self_model.prune(_alive)
+            self.identity.prune(_alive)
 
         # Workspace: read-only.
         self._last_ignition = self.workspace.observe(

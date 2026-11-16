@@ -184,6 +184,23 @@ class Identity:
             stability=mean_stab,
         )
 
+    # ---------- folding ----------
+
+    def prune(self, alive: set[int]) -> int:
+        """删掉两端已有不存在的 `_appear` 条目，返回删掉的条数。
+
+        折叠拿走 uid 之后，`_appear` 里那条边的出现次数还留着——它指向的区域
+        她已经没有了。2026-11-16 实测：`identity.appear` 里 10299 个死端点。
+
+        `_edge_snapshot` 不用单独处理：它每次 `snapshot()` 都从当前的 graph 重建。
+        """
+        alive = {int(a) for a in alive}
+        dead = [k for k in list(self._appear)
+                if int(k[0]) not in alive or int(k[1]) not in alive]
+        for k in dead:
+            self._appear.pop(k, None)
+        return len(dead)
+
     def snapshot(self, graph: TraceGraph) -> None:
         """Record current edge weights for use by structural()."""
         self._edge_snapshot = {(e.a, e.b): e.w for e in graph.edges()}

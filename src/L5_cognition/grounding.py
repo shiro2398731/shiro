@@ -178,6 +178,36 @@ class GroundingTable:
         self.context_totals[context] = self.context_totals.get(context, 0) + int(count)
         self.total += int(count)
 
+    # ---------- folding ----------
+
+    def prune(self, alive: set[int]) -> int:
+        """删掉已经不存在的区域的统计，返回被删的符号行数。
+
+        折叠会把区域的 uid 从 `alive_uids()` 里拿走，但这张表是按 uid 存的，
+        于是它还在给一个她已经没有了的指代记账。2026-11-15 容量折叠第一次真触发
+        （区域 1074，表里 3772 个键），integrity 报 33772 条 `not a live uid`。
+
+        键是名字不是量：这里只做集合成员判断，不排序、不比较大小（见 tests/test_uid.py）。
+
+        删完之后 `total` / `symbol_totals` / `context_totals` 三处必须同时减，
+        否则 integrity 的第三条（counts 加得起来）会红。
+        """
+        alive = {int(a) for a in alive}
+        dead = [s for s in list(self.counts) if int(s) not in alive]
+        if not dead:
+            return 0
+        for s in dead:
+            row = self.counts.pop(s, {})
+            self.symbol_totals.pop(s, None)
+            for c, k in row.items():
+                left = int(self.context_totals.get(c, 0)) - int(k)
+                if left > 0:
+                    self.context_totals[c] = left
+                else:
+                    self.context_totals.pop(c, None)
+                self.total -= int(k)
+        return len(dead)
+
     # ---------- statistics ----------
 
     def mutual_information(self) -> float:

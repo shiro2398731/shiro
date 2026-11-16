@@ -166,6 +166,37 @@ class OnlineSelfModel:
         self._seen[p] = self._seen.get(p, 0.0) + 1.0
         self._seen[n] = self._seen.get(n, 0.0) + 1.0
 
+    # ---------- folding ----------
+
+    def prune(self, alive: set[int]) -> int:
+        """删掉已经不存在的区域，返回被删掉的符号行数。
+
+        `_counts` 的两端和 `_seen` 都是 uid。折叠之后不剪，`distribution()` 的
+        Laplace 分母会把一个她已经没有了的区域算进词表，integrity 也会报悬空 id
+        （2026-11-15 实测：自模型符号 6326、区域 1074）。
+
+        累计量（`nll_bits` / `scored` / `observations` / `hits` / `conf_*`）是历史，
+        一律不动——删它们等于改历史，比留着一个死 id 更坏。
+        """
+        alive = {int(a) for a in alive}
+        dropped = 0
+        for prev in list(self._counts):
+            if int(prev) not in alive:
+                self._counts.pop(prev, None)
+                dropped += 1
+                continue
+            row = self._counts[prev]
+            for nxt in list(row):
+                if int(nxt) not in alive:
+                    row.pop(nxt, None)
+            if not row:
+                self._counts.pop(prev, None)
+                dropped += 1
+        for s in list(self._seen):
+            if int(s) not in alive:
+                self._seen.pop(s, None)
+        return dropped
+
     @property
     def states_seen(self) -> int:
         return len(self._seen)

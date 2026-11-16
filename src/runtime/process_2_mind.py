@@ -222,6 +222,26 @@ def main() -> int:
         running["flag"] = False
 
     signal.signal(signal.SIGINT, on_sig)
+
+    # ---- 启动清理 ----
+    # 上一版在折叠时没有剪 grounding / self_model / identity，存档里可能带着已经
+    # 不存在的 uid（2026-11-15 容量折叠第一次真触发之后，integrity 报 33772 条
+    # "not a live uid"）。这里做一次与折叠路径相同的剪枝：没有死 id 时是 no-op。
+    _space0 = stream.landscape.state_space
+    _alive0 = _space0.alive_uids()
+    _g0 = stream.grounding.prune(_alive0)
+    _s0 = stream.self_model.prune(_alive0)
+    _i0 = stream.identity.prune(_alive0)
+    _sync0 = stream.consolidator.sync(stream.graph, _space0)
+    if _g0 or _s0 or _i0 or _sync0.get("dropped_edges"):
+        observer.event("startup_prune", {
+            "grounding_pruned": int(_g0),
+            "self_model_pruned": int(_s0),
+            "identity_pruned": int(_i0),
+            "edges_dropped": int(_sync0.get("dropped_edges", 0)),
+        })
+        print(f"[P2] startup prune: grounding={_g0} self_model={_s0} "
+              f"identity={_i0} edges={_sync0.get('dropped_edges', 0)}")
     signal.signal(signal.SIGTERM, on_sig)
 
     print("[P2] starting L5 (terrain dynamics)")
@@ -371,8 +391,23 @@ def main() -> int:
                     })
                 _folded += _capacity_folded
                 if _folded:
+                    # 折叠把 uid 从 alive_uids() 里拿走了，但指代表与自模型也是按
+                    # uid 记账的：不跟着剪，它们就会给已经不存在的区域继续记账。
+                    # 2026-11-15 实测：区域 1074、指代键 3772、自模型符号 6326，
+                    # integrity 报 33772 条 "not a live uid"。
+                    _alive = _space.alive_uids()
+                    _ground_pruned = stream.grounding.prune(_alive)
+                    _self_pruned = stream.self_model.prune(_alive)
+                    _ident_pruned = stream.identity.prune(_alive)
+                    # 图自己也会走到 sync，但折叠发生在 step 之后、落盘之前——
+                    # 不在这里补一次，存档里就会带着被折区域的边。
+                    _sync = stream.consolidator.sync(stream.graph, _space)
                     observer.event("fold", {"removed": int(_folded),
-                                   "live": len(stream.landscape.state_space.attractors())})
+                                   "live": len(stream.landscape.state_space.attractors()),
+                                   "grounding_pruned": int(_ground_pruned),
+                                   "self_model_pruned": int(_self_pruned),
+                                   "identity_pruned": int(_ident_pruned),
+                                   "edges_dropped": int(_sync.get("dropped_edges", 0))})
                 persist.snapshot_all({"l5": stream})
                 last_persist = now
                 # 检查点已经包含了日志的全部效果，可以截断
