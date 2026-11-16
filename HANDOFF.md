@@ -394,3 +394,24 @@ P2 的 fold 路径；③ 存档副本上重测指代增益；④ 全量 36 文�
 - 引擎表带存档历史、探针从零开始，`abs(mi_engine - mi_probe) < 1e-9` 不可能成立 →
   改成比「本次新增的符号集合」。
 - 探针的分桶历史复制引擎的：否则前 MIN_HIST 步它分不出桶，那段观测只进引擎。
+
+### recover() 的访问间隔改为按区域寿命（2026-11-16 10:15）
+
+`recover()` 里一直写 `interval = total / a._assigned`，`total` 是整个运行的步数。
+对刚出生的区域这是系统性低估：它才活了几百步，却被算成「平均两万七千步才被访问
+一次」，于是 `rate_scale = half/interval` 被压小，衰减慢了几十倍——它本该衰减，
+结果冻着。这正是 `_born_step` 当年在 viability.py 里修掉的那个错（当时只对齐了 R
+那一半），这一处一直漏着。
+
+口径改成 `life = total - _born_step`，与 `_population_visit_rate` / `_birth_depth`
+一致。实测（真存档 1064 区域 / total 221960 步，901 个区域有足够赋值）：
+
+| | 旧 | 新 |
+|---|---|---|
+| interval 中位数 | 27745 步 | **491.5 步** |
+| 比值 | — | 中位 **47.65 倍**，最大 **20178 倍** |
+
+901 个里有 786 个是最近一半跑出来的——被低估的主要就是这批年轻区域。
+
+测试：test_fold 8/8、test_l5_age_persistence 6/6、test_birth_depth 4/4、
+test_capacity 6/6、test_index_remap 6/6。

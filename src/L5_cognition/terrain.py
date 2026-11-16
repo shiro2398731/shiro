@@ -1271,7 +1271,13 @@ class StateSpace:
             # base half-life would allow.
             rate_scale = 1.0
             if a._assigned >= MIN_ASSIGN_FOR_INTERVAL and half > 0:
-                interval = total / float(a._assigned)
+                # 口径与 _population_visit_rate / _birth_depth 对齐：访问间隔按
+                # 「这个区域活了多久」算，不按「整个运行跑了多久」算。
+                # 用全局步数会把刚出生的区域算成「很久才被访问一次」，于是它们
+                # 衰减得比应有的慢。这正是 _born_step 当年在 viability.py 里修掉的
+                # 那个错（当时只对齐了 R 那一半），这一处一直漏着。
+                life = max(total - int(getattr(a, "_born_step", 0)), 1)
+                interval = life / float(a._assigned)
                 if interval > half:
                     # divide by the ratio, capped so a single stray region does
                     # not end up effectively frozen
