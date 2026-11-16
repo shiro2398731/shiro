@@ -415,3 +415,19 @@ P2 的 fold 路径；③ 存档副本上重测指代增益；④ 全量 36 文�
 
 测试：test_fold 8/8、test_l5_age_persistence 6/6、test_birth_depth 4/4、
 test_capacity 6/6、test_index_remap 6/6。
+
+### 性能热点（2026-11-16 10:20，cProfile 60 步）
+
+60 步 0.951 s → **15.9 ms/步**（profiler 下，无并发；裸跑 24.5 ms）。
+
+| 位置 | 累计 | 占比 |
+|---|---|---|
+| `drive.deflection` | 0.521 s | 55% |
+| └ `drive.tensions` | 0.332 s | 35% |
+| `terrain.sigma` | 0.227 s | 24% —— **60 步被调 104316 次，约 1738 次/步** |
+| `transitions.observe` | 0.165 s | 17% |
+| `numpy.median` | 0.155 s | 16%（5756 次调用） |
+
+**方向**：`sigma` 被 `tensions` 逐对调用，每对算一次中位数。两条最直接的路——
+① 把 `sigma` 改成按区域的缓存 MAD，结构变化时失效（跟 `uid_row()` 一个套路）；
+② 把 `tensions` 的逐对 Python 循环向量化。先动 ①，它不改语义。
