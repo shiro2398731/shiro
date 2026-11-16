@@ -63,6 +63,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from src.common import atomics
+
 # Paths are anchored to the repository root, not to the process working
 # directory. 2026-11-09: every path here used to be relative, so a run started
 # from another directory read (and created) a different data/state -- she
@@ -165,12 +167,23 @@ def load(state_dir: Path | str = STATE_DIR) -> ComaState:
 
 
 def save(state: ComaState, state_dir: Path | str = STATE_DIR) -> Path:
-    """原子写：先写临时文件再 replace，避免半个文件。"""
+    """原子写：先写临时文件再 replace，避免半个文件。
+
+    tmp 名带 pid+线程（`src/common/atomics.py`）：这个账本有不止一个进程在写，
+    固定名 `<name>.tmp` 会让两个写者撞成 Permission denied —— 实测 2026-11-15
+    19:32:53 就是这么把 P1 弄死的。
+    """
     p = _path(state_dir)
-    tmp = p.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
-    os.replace(tmp, p)
+    tmp = atomics.unique_tmp(p)
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        atomics.replace_with_retry(tmp, p)
+    except Exception:
+        atomics.cleanup(tmp)
+        raise
     return p
 
 

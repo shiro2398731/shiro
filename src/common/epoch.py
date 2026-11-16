@@ -38,6 +38,8 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from src.common import atomics
 from typing import Optional
 
 DEFAULT_DIR = Path("data/state")
@@ -107,11 +109,22 @@ def load(directory: Path | str = DEFAULT_DIR) -> Epoch:
 
 
 def save(state: Epoch, directory: Path | str = DEFAULT_DIR) -> Path:
+    """原子写。tmp 名带 pid+线程：这个账本也被多个进程写（心跳）。
+
+    固定名 `<name>.tmp` 会让两个写者撞成 Permission denied —— 同 `coma.save`，
+    见 `src/common/atomics.py`。
+    """
     p = _path(directory)
-    tmp = p.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
-    os.replace(tmp, p)
+    tmp = atomics.unique_tmp(p)
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        atomics.replace_with_retry(tmp, p)
+    except Exception:
+        atomics.cleanup(tmp)
+        raise
     return p
 
 

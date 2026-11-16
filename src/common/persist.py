@@ -48,6 +48,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.common import atomics
+
 # Bounded buffer of member states kept per attractor. This is the same bound
 # the Attractor dataclass uses; it is repeated here so that load() can restore
 # the bound explicitly rather than relying on the field default.
@@ -71,23 +73,23 @@ def _atomic_dump(payload, path: Path) -> None:
 
     2026-11-08: a reboot mid-save used to truncate the target .pkl, because
     save_* wrote straight into it. The loss would be the whole shape, not the
-    last few minutes. The payload now goes to <name>.tmp, is fsynced, and only
+    last few minutes. The payload now goes to a tmp file, is fsynced, and only
     then replaces the target.
+
+    2026-11-15: the tmp name used to be the fixed `<name>.tmp`, and two modules
+    writing the same state file collided on it -- the second `open(..., 'wb')`
+    failed with Permission denied, which killed P1 (see src/common/atomics.py).
     """
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = atomics.unique_tmp(path)
     try:
         with tmp.open("wb") as f:
             pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        atomics.replace_with_retry(tmp, path)
     except Exception:
         # Leave the previous file untouched; do not keep a half-written tmp.
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except Exception:
-            pass
+        atomics.cleanup(tmp)
         raise
 
 def build_l0_payload(net) -> dict:
