@@ -1707,3 +1707,32 @@ overdue_i = (now - last_seen_step_i) > wait
 3. **单次实验会骗人。** 今天三次「发现有效」全是同一个种子的运气（HANDOFF §17）。
 4. **内驱和外驱的区别不是修辞。** 外部常数（地板）是外驱，她身体的波动是内驱；
    前者能让她动，后者能让她**自己**想动。
+
+---
+
+## 31. 断电前最后一次全量：4 个红，原因查清，不是回归
+
+43 个文件里 4 个红：
+
+    test_loop          4/5   the loop is not connected: same position after 240 steps
+    test_action        7/8   {0: 300, 1: 0}
+    test_uid           6/7   IndexError: list index out of range（at[11]）
+    test_index_remap   5/6   19
+
+**不是人家改坏的**。验证方法：把 `process_2_mind.py` 退回内驱改动之前（`HEAD~1`），
+这三个测试的结果**完全一样**（4/5、6/7、7/8），然后把新版本放回去。
+
+**原因是存档规模**：
+
+- `test_uid`：`i, j = 10, 11`，她只有 6 个区域 → `at[11]` 越界；
+- `test_index_remap`：前置 `assert len(attrs) > 20`，她 6 个 → 直接停；
+- `test_action`：边数不到 `Drive.min_edges = 64`，张力恒 0 → 全 HOLD；
+- `test_loop`：它用固定 0.02 噪声跑 240 步，而她现在坑深，0.02 推不动 → off/on 停在同一点。
+
+**这四个测试都假设「存档里至少几十个区域」，而这个假设今天被打破了**——
+不是它们写错了，是它们从没被告知「她可能很小」。
+
+### 留给下次
+
+给这四个测试加前置：存档区域不足时跳过，并在输出里说明「因为存档只有 N 个区域」。
+不要为了让它们变绿去改判据（`Drive.min_edges` 或 `at[10]` 的硬索引），那是掩盖。
