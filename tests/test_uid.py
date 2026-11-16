@@ -230,6 +230,22 @@ def _rename_everywhere(st, perm: dict) -> None:
     idn._appear = collections.defaultdict(int, {pair(k): v for k, v in idn._appear.items()})
     idn._edge_snapshot = {pair(k): v for k, v in idn._edge_snapshot.items()}
 
+    # The detector publishes region names too, and it is not just observation:
+    # `_apply_leave` looks the row up by `detector.current_attractor`, so a
+    # renamed stream whose detector still holds the old name finds no row and
+    # simply does not move. That is a difference caused by the test, not by the
+    # code. 2026-11-16: this is what made the test fail after the archive grew.
+    det = st.detector
+    if det._current is not None:
+        det._current = int(perm[int(det._current)])
+    for ev in det.history:
+        ev.from_attractor = int(perm[int(ev.from_attractor)])
+        ev.to_attractor = int(perm[int(ev.to_attractor)])
+
+    # The stay ledger names the region she has been in.
+    if st._dwell_region is not None:
+        st._dwell_region = int(perm[int(st._dwell_region)])
+
     # A fresh name must never collide with a live one.
     space._next_uid = max(int(a.uid) for a in space.attractors()) + 1
     # The name -> row map is cached per structural version, and renaming is the
