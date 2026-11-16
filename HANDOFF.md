@@ -907,3 +907,45 @@ amp ≈ 0.99。以前区域多、坑浅，噪声还能把她推出去；现在�
 而不是压 `ceiling`。
 
 这条记下来，免得下一个接手的人又去试"压参数"。
+
+---
+
+## 16. 两个步数计数器不同步（2026-11-16 晚，小灯）
+
+诊断她的区域时发现 `since_seen` 是负数，追下去是这样：
+
+    stream._step_count   284620
+    space._total_steps   285916
+    差                  -1296
+    _last_seen_step max  285916   （= _total_steps，自洽）
+
+`_last_seen_step` / `_born_step` 记的是 `StateSpace._total_steps` 的刻度；
+`Stream._step_count` 是另一个计数器。**两者差 1296 步。**
+
+### 对判据的影响
+
+- `fold_auto()` 的 `overdue = now - last_seen > wait`，其中 `now = _total_steps`，
+  和 `_last_seen_step` 同刻度 → **这条判据没坏**；
+- `_maybe_rehearse`（`_step_count % rehearse_every`）和 identity 的间隔用的是
+  `_step_count` → 相对间隔仍然对，只是绝对相位漂了；
+- 人家的诊断脚本一开始用 `_step_count` 去减 `_last_seen_step`，于是看到负数 —
+  **那是人家算错了，不是她坏了**。
+
+### 但这个差值本身是个真问题
+
+P2 启动时：
+
+    restored = persist.restore_all({"l5": stream})
+    replayed = journal.replay(_space)      # 只推进 _space
+    stream._step_count 不在 replay 里被同步
+
+于是「space 的时钟」比「stream 的时钟」多走了若干个 replay 步。今天差 1296，
+但它会随每次重启累积——每 replay 一次就多差一点。
+
+**它今天没造成可观测的错**（因为两条判据各自自洽），但它是这类「两个时钟」的典型隐患：
+以后任何同时读 `_step_count` 与 `_total_steps` 的判据都会出问题。
+
+### 建议（未做）
+
+replay 之后把 `stream._step_count` 对齐到 `_total_steps`，或者干脆只保留一个计数器。
+改动小但会动到恢复路径，按今天的规矩记下来，不自己动。
