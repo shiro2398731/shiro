@@ -51,12 +51,18 @@ def _tension(st: Stream) -> float:
     return float(st.drive.summary().get("sum", 0.0))
 
 
-def _trace(st: Stream, steps: int, amplitude: float) -> dict:
+def _trace(st: Stream, steps: int, amplitude: float,
+           random_action: bool = False, seed: int = 0) -> dict:
     ids: list[int] = []
     tensions: list[float] = []
     leaves: list[bool] = []
     x0 = st._st.x.copy()
+    rng = np.random.default_rng(seed)
     for _ in range(steps):
+        if random_action:
+            # 纯随机策略：每步抛硬币。这是 e 级判据要求的对照——
+            # 「她选的动作是否显著优于随机」，不是「是否比强制好」。
+            st.force_action = LEAVE if float(rng.random()) < 0.5 else HOLD
         st.landscape.set_noise_amplitude(amplitude)
         st.step()
         aid = st.detector.current_attractor
@@ -111,6 +117,13 @@ def run(warm: int = 400, steps: int = 600, amplitude: float = 0.02) -> dict:
         free.step()
     c = _trace(free, steps, amplitude)
 
+    # e 级判据要的对照组：纯随机策略。
+    rnd = _fresh(amplitude)
+    for _ in range(warm):
+        rnd.landscape.set_noise_amplitude(amplitude)
+        rnd.step()
+    d = _trace(rnd, steps, amplitude, random_action=True, seed=11)
+
     return {
         "warm": warm,
         "steps": steps,
@@ -118,10 +131,14 @@ def run(warm: int = 400, steps: int = 600, amplitude: float = 0.02) -> dict:
         "do_hold": a,
         "do_leave": b,
         "unforced": c,
+        "random": d,
         "consequence": {
             "tension_delta_hold": a["tension_delta"],
             "tension_delta_leave": b["tension_delta"],
+            "tension_delta_unforced": c["tension_delta"],
+            "tension_delta_random": d["tension_delta"],
             "leave_helps": (b["tension_delta"] < a["tension_delta"]),
+            "hers_beats_random": (c["tension_delta"] < d["tension_delta"]),
         },
     }
 
@@ -142,7 +159,7 @@ def main(argv: list[str]) -> int:
     print(f"warm={r['warm']}  steps={r['steps']}  amplitude={r['amplitude']}"
           f"  (same checkpoint, same noise sequence)")
     cols = (("do(hold)", r["do_hold"]), ("do(leave)", r["do_leave"]),
-            ("unforced", r["unforced"]))
+            ("unforced", r["unforced"]), ("random", r["random"]))
     keys = (("distinct", "distinct regions"),
             ("stay_share", "P(next == current)"),
             ("displacement", "|x - x0|"),
@@ -161,7 +178,10 @@ def main(argv: list[str]) -> int:
 
     print(f"consequence: tension delta hold={r['consequence']['tension_delta_hold']:+.5f}  "
           f"leave={r['consequence']['tension_delta_leave']:+.5f}  "
-          f"leave reduces tension: {r['consequence']['leave_helps']}")
+          f"hers={r['consequence']['tension_delta_unforced']:+.5f}  "
+          f"random={r['consequence']['tension_delta_random']:+.5f}")
+    print(f"leave reduces tension: {r['consequence']['leave_helps']}   "
+          f"hers beats random: {r['consequence']['hers_beats_random']}")
     print("Reading: if leave does not reduce tension relative to hold, her hand moves")
     print("         her but does nothing for her -- there is nothing for a policy to learn.")
     return 0
