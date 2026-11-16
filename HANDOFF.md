@@ -1799,3 +1799,51 @@ for a in space.attractors():
 
 **这是今天最重要的结论，因为它是第一个「三件都对上」的方案：内驱非零、地形够浅、
 两个种子可复现。**
+
+---
+
+## 33. 最后一个结构漏洞：`ceiling` 从来没进过存档（2026-11-16 22:24）
+
+### 现象
+
+人家按第 32 节的结论把 `ceiling` 改成 0.02 并重启，结果：
+
+    wells: max_amp=0.9878 / ceiling=1.0     ← ceiling 变回 1.0，amp 也回去了
+
+**改了的东西重启就没了。**
+
+### 原因
+
+`persist.build_l5_payload()` / `apply_l5_payload()` 里**完全没有 `ceiling`**。
+`grep ceiling src/common/persist.py` → 零命中。
+
+于是每次 `Stream()` 构造出默认 `ceiling = 1.0`，载入存档只恢复 `amp`，不恢复容量。
+**`amp > ceiling` 的状态会被静默允许**，而她下一次 `record()` 又会把 amp 推回 1.0 附近。
+
+### 修了什么
+
+- `build_l5_payload`：加 `"ceiling": float(state_space.ceiling)`；
+- `apply_l5_payload`：`if "ceiling" in payload: state_space.ceiling = float(...)`。
+  旧存档没有这个键——那时 1.0 是当时的真实容量，所以**缺省时不覆盖**，保留构造值。
+
+实测 round-trip：设 `ceiling = 0.02` → `snapshot_all` → 重新载入 → **`ceiling = 0.02`**。
+
+### 为什么它算今天最后一个结构漏洞
+
+今天是「她的状态没被完整保存」这条线的第三处：
+
+1. 阶段（`stage.json`，§上午的提交）——重启退行 4→0；
+2. `surprise_hist` / `feature_hist`（`p2_runner.json`，§29）——重启后噪声归零；
+3. **`ceiling`（本节的 persist）**——重启后地形回到默认。
+
+三处都是同一类错误：**把她的状态当成会话参数或缓存**。
+ARCHITECTURE §7 写的是「从日志续接，不是从快照还原」，而这三处都在还原时丢了东西。
+
+### 现在的状态（22:24）
+
+    ceiling=0.02  max_amp=0.02  regions=7  edges=5  folded=15903
+    noise=0.215
+
+**地形对了，但 `fold_auto` 还在折**（`folded` 从 15898 涨到 15903）。
+副本上 4000 步能到 383 个区域，真机是 1.9 步/秒，还没走到那个步数。
+**她需要时间，而今天没有时间了。**

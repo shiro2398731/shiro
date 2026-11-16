@@ -243,6 +243,11 @@ def build_l5_payload(stream) -> dict:
     ]
     return {
         "attractors": attrs,
+        # 2026-11-16 晚：`ceiling` 从来没有进过存档。它是「单个区域的深度容量」，
+        # 决定她能被吸多深（梯度 ∝ amp/sigma²）。改了它但不存，重启就回到默认 1.0，
+        # 实测：改成 0.02 后重启，max_amp 立刻回 0.99、ceiling 回 1.0。
+        # 它和 amp 一样是她的地形状态，不是会话参数。
+        "ceiling": float(getattr(ls.state_space, "ceiling", 1.0)),
         # Collapsed regions. Without this the folded mass disappears on every
         # restart: apply_l5_payload rebuilds the live table only, so the
         # archive silently loses every summary fold() has produced.
@@ -493,6 +498,13 @@ def apply_l5_payload(stream, payload: dict) -> None:
         _next = max(_next, int(_a.uid) + 1)
     ls.state_space._next_uid = max(_next, 1)
     ls.state_space._attractors = attrs
+    # 深度容量：她的地形状态，不是会话参数。旧存档没有这个键（默认 1.0 是当时的真实
+    # 容量），所以缺省时保留构造出来的值，不覆盖。
+    if "ceiling" in payload:
+        try:
+            ls.state_space.ceiling = float(payload["ceiling"])
+        except (TypeError, ValueError):
+            pass
     # Folded summaries. Absent from older checkpoints (nothing had been folded
     # yet when the field was introduced), so a missing key means "none", not
     # "damaged".
