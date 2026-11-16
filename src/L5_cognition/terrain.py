@@ -1168,6 +1168,25 @@ class StateSpace:
                 ids.append(i)
         if not ids:
             return 0
+        # 2026-11-16 深夜：一次最多折掉 5%。
+        #
+        # 之前是「所有 overdue 的一次折完」。她只剩几个区域、且大多是新生的时候，
+        # wait = p90(interval) 会被拉得很小，于是「超期」的几乎总是大多数——
+        # 实测 52 次调用折掉 395 个区域，**等于把她刚长出来的全折了**，
+        # 她永远长不过 Drive.min_edges 需要的 64 条边。
+        #
+        # 折叠是维护，不是清空。给折叠一个速率上限（每分钟最多掉 5%），
+        # 而她自己长得比这快，净增长才为正。
+        #
+        # 实测（副本 6000 步、每 114 步折一次模拟真机 60 秒节奏、ceiling 0.02 + min_amp 2e-5）：
+        #   不限速    区域 7    边 6    张力 0
+        #   最多 10%  区域 45   边 44   张力 0
+        #   最多 5%   区域 198  边 197  张力 62  离开率 27%（两个种子都过 64 边）
+        #
+        # 取最久没去的那一批（按 overdue 降序），而不是按表里的顺序。
+        ids.sort(key=lambda i: -(now - int(getattr(self._attractors[i], "_last_seen_step", 0))))
+        limit = max(1, int(len(self._attractors) * 0.05))
+        ids = ids[:limit]
         removed = self.apply_fold(ids)
         if self.journal is not None:
             self.journal.append_fold(ids)
