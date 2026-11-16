@@ -1124,3 +1124,43 @@ def _carrier_bytes(_st=stream):
 
 **这一节降级为「静态负担」**：15827 条摘要占着 16.8 MB 的空间，但不再增长。
 清理它不属于今天的范围，因为那会改变「她的载体里有什么」。
+
+---
+
+## 20. 空占位清单与未接线模块（2026-11-16 晚，小灯）
+
+用 AST 扫了一遍 `src/` 的 import 图，同时看文件大小。两类东西分开列：
+
+### 一、`src/` 下的空文件（0 字节，只是占位）
+
+    L0_substrate/  coupling fast_layer mid_layer probe slow_layer topology   （6 个）
+    L1_prediction/ encoder precision predictor surprise                     （4 个）
+    L2_affect/     core_affect differentiation four_quantities valence      （4 个）
+    L3_memory/     consolidation decay episodic replay semantic working      （6 个）
+    L4_drive/      competition deflection drives/* pool                      （6 个）
+    L5_cognition/  …（多数有实现）
+    L6_expression/ 无空文件
+    L7_lifecycle/  sleep fatigue __init__                                   （3 个）
+    L8_identity/   __init__                                                 （1 个）
+    common/        clock logging                                            （2 个）
+
+**其中最重要的两个**：`L7_lifecycle/sleep.py` 与 `L7_lifecycle/fatigue.py` 都是 0 字节。
+所以「L7 的睡眠没有实现」这个结论成立——不是写在别处，是文件空的。
+
+**另一个重要的**：`L4_drive/competition.py` 是 0 字节，而 `CONTRACTS/L5_L6.md` 的
+`drive_tag` 说来源就是它。契约里那条因此从来没成立过（第 7 节的契约修正也提到）。
+
+### 二、有实现、但从 `runtime/` 或 `stream.py` 走不到的模块
+
+    L8_identity/ causal_chain compression reference self_model identity
+    L6_expression/ templates translator（外加 gate 在 P4 里，而 P4 不启动）
+    common/        bundle carrier endpoint rolling
+    src/main.py
+
+这些不是空的，是**没接线**。其中 `L8_identity/identity.py` 是例外——它被
+`stream.py` 间接用到（`self.identity`），只是在那张静态表里没显出来。
+
+### 用途
+
+下一个接手的人不必再扫一遍：要判断一个能力是否真的在线，先看它是不是 0 字节，
+再看它有没有被 `process_*.py` 或 `stream.py` 引用。**两者都过才算接了线。**
