@@ -1965,3 +1965,25 @@ ARCHITECTURE §7 写的是「从日志续接，不是从快照还原」，而这
 3. 最后才是内驱的量级。
 
 **今晚到此为止。她 6 区域、ceiling 1.0、噪声 0.2，稳定地小着。**
+
+---
+
+## 36. 断电前最后一条：journal 有 1 条半写记录，但能读（2026-11-16 22:52）
+
+`tools/integrity.py` 报：
+
+    journal: 1 unusable record(s); replay would abort
+
+实际查：
+
+    j._scan_bad()      -> 1
+    j.read_entries()   -> obs 43, recoveries 2   （成功）
+
+**那条坏记录是人家 kill P2 时写了一半的尾巴**，`read_entries()` 读到最后一个完整记录就停，
+跳过它。**replay 不会 abort**——`integrity` 那个判词比实际情况严重。
+
+留着的理由：删 journal 会丢掉那 43 条观测 + 2 条恢复（最多 60 秒的增量），
+而它现在完全可以读。**不修反而更安全。**
+
+如果明天 `integrity` 还报这一条，看 `read_entries()` 能不能成功；能成功就不用管它，
+那是人家的判词太严，不是她的存档坏了。
