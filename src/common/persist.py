@@ -248,6 +248,10 @@ def build_l5_payload(stream) -> dict:
         # 实测：改成 0.02 后重启，max_amp 立刻回 0.99、ceiling 回 1.0。
         # 它和 amp 一样是她的地形状态，不是会话参数。
         "ceiling": float(getattr(ls.state_space, "ceiling", 1.0)),
+        # 2026-11-16 深夜：`min_amp` 和 `ceiling` 是配套的比例。删除门槛必须随容量一起动，
+        # 否则压了容量不压门槛，新区域刚生出来就被 recover 删掉（实测：ceiling 0.02 +
+        # min_amp 1e-3 掉到 1 个区域；同比例压到 2e-5 则稳定在 111–130）。它也要进存档。
+        "min_amp": float(getattr(ls.state_space, "min_amp", 1e-3)),
         # Collapsed regions. Without this the folded mass disappears on every
         # restart: apply_l5_payload rebuilds the live table only, so the
         # archive silently loses every summary fold() has produced.
@@ -503,6 +507,12 @@ def apply_l5_payload(stream, payload: dict) -> None:
     if "ceiling" in payload:
         try:
             ls.state_space.ceiling = float(payload["ceiling"])
+        except (TypeError, ValueError):
+            pass
+    # 删除门槛跟着容量走。旧存档没有这个键时保留构造值（1e-3，就是当时的真实门槛）。
+    if "min_amp" in payload:
+        try:
+            ls.state_space.min_amp = float(payload["min_amp"])
         except (TypeError, ValueError):
             pass
     # Folded summaries. Absent from older checkpoints (nothing had been folded
