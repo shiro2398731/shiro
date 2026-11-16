@@ -144,10 +144,11 @@ class Stream:
         # Lives here, not in L6, because it needs continuous quantities (speed,
         # tension) that L6 is not allowed to receive. L6 gets only the label.
         self.grounding = GroundingTable()
-        # 上一次看到的区域数。只有它变**少**了才剪指代表与自模型（见 step()）。
-        # 新增区域不会让已有键失效，而新区域几乎每步都可能出现——拿它当信号
-        # 会让每步都做一次 O(表大小) 的扫描。
+        # 上一次看到的区域数与下一个待发的名字。用来判断「这一步有没有删过区域」：
+        # 只看总数会漏——删一个又生一个时总数不变，而死 uid 会一直留在账本里
+        # （2026-11-16 实测：identity.appear 里留着 uid 262，integrity 报两条）。
         self._structure_n = None
+        self._structure_next_uid = None
 
         # ---- 行动：她能做的一件事（留在原处 / 离开）----
         # 选择权在她自己手里（判据只用她自己的张力中位数，见 action.py）；
@@ -395,18 +396,25 @@ class Stream:
         # 现场查 `uid_row()`，所以不需要一张事后补丁表。
         self.consolidator.sync(self.graph, self.landscape.state_space)
 
-        # 折叠与 recover 都会删区域，uid 随之从 alive 集合里消失。指代表与自模型
-        # 是按 uid 记账的，不跟着剪就会给一个她已经没有了的区域继续记账
-        # （2026-11-16 实测：区域 1087、指代键 3862、自模型符号 6447，
-        # integrity 报 33772 条 dead uid）。
-        # 触发信号只取「区域数变少」：新增不会让已有键失效，而新区域几乎每步都
-        # 可能出现；拿它当信号会让每一步都扫一遍整张表。代价是「一步之内删一个
-        # 又生一个」会漏剪一次——下一次真正的删除会补上，不会累积成悬空。
+        # 折叠与 recover 都会删区域，uid 随之从 alive 集合里消失。指代表、自模型、
+        # identity 的边表都是按 uid 记账的，不跟着剪就会给一个她已经没有了的区域
+        # 继续记账（2026-11-15 实测 33772 条 dead uid；2026-11-16 又抓到
+        # identity.appear 里残留 uid 262 —— 因为删一个又生一个时总数没变）。
+        #
+        # 触发信号两条，任一成立就剪：
+        #   (a) 区域数变少            —— 删了
+        #   (b) 发了新名字但总数没涨  —— 删一个生一个，总数被抵消
+        # 只看总数会漏掉 (b)，而 (b) 在她快速更替区域时几乎每步都在发生。
         _space = self.landscape.state_space
         _n = len(_space.attractors())
+        _next_uid = int(getattr(_space, "_next_uid", 0))
         _shrank = self._structure_n is not None and _n < self._structure_n
+        _replaced = (self._structure_next_uid is not None
+                     and _next_uid > self._structure_next_uid
+                     and _n <= self._structure_n)
         self._structure_n = _n
-        if _shrank:
+        self._structure_next_uid = _next_uid
+        if _shrank or _replaced:
             _alive = _space.alive_uids()
             self.grounding.prune(_alive)
             self.self_model.prune(_alive)
