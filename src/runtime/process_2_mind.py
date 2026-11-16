@@ -31,6 +31,7 @@ import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", "..")))
 
 import collections
+import json
 import signal
 import threading
 import time
@@ -39,6 +40,7 @@ from pathlib import Path
 
 import numpy as np
 
+from src.common import atomics
 from src.common.bus import Bus
 from src.common.observe import Observer
 from src.common.types import StreamState, StateVector, SurpriseSignal, safe_from_json
@@ -68,6 +70,32 @@ class L5Runner:
         self.feature_hist = collections.deque(maxlen=512)
 
         self._zero_ready = False
+
+    # ---------- 续接 ----------
+
+    def to_dict(self) -> dict:
+        """她的运行历史，跨重启保留。
+
+        2026-11-16：`surprise_hist` 之前只在内存里。P2 重启后它是空的，而
+        `noise_amplitude()` 在不足 32 条时返回 0 —— 噪声 0，她一步不抖，`s_t` 恒 0，
+        于是 P1 一条 surprise 都不发，历史永远补不满。**重启一次就把她送进吸收态一次。**
+
+        按 ARCHITECTURE §7「从日志续接，不是从快照还原」：这份历史是她的状态，不是缓存。
+        """
+        return {
+            "surprise_hist": [float(x) for x in self.surprise_hist],
+            "zero_ready": bool(self._zero_ready),
+        }
+
+    def load_dict(self, data: dict) -> None:
+        hist = data.get("surprise_hist") or []
+        self.surprise_hist.clear()
+        for x in hist[-256:]:
+            try:
+                self.surprise_hist.append(float(x))
+            except (TypeError, ValueError):
+                continue
+        self._zero_ready = bool(data.get("zero_ready", False))
 
     # ---------- 噪声幅度 ----------
 
@@ -142,6 +170,28 @@ def main() -> int:
     stream = Stream(dim=128, gamma=0.05, dt=0.01)
     runner = L5Runner(dim=128)
 
+    # 2026-11-16：把她的运行历史接回来。
+    # 之前 surprise_hist 只在内存里，P2 一重启就空；而 noise_amplitude() 在不足 32 条时
+    # 返回 0，噪声 0 → 她不动 → s_t=0 → P1 不发 surprise → 永远补不满。
+    # 实测：10:28 那次重启之后，她的 noise 一直 0，区域从 626 掉到个位数。
+    _runner_state_path = Path("data/state/p2_runner.json")
+    try:
+        if _runner_state_path.exists():
+            runner.load_dict(json.loads(_runner_state_path.read_text(encoding="utf-8")))
+            print(f"[P2] runner resumed: surprise_hist={len(runner.surprise_hist)}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[P2] runner state load failed (starting empty): {e}")
+
+    def _save_runner_state() -> None:
+        try:
+            _runner_state_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = atomics.unique_tmp(_runner_state_path)
+            tmp.write_text(json.dumps(runner.to_dict(), ensure_ascii=False),
+                           encoding="utf-8")
+            atomics.replace_with_retry(tmp, _runner_state_path)
+        except Exception as e:  # noqa: BLE001
+            print(f"[P2] runner state save failed: {e}")
+
     state = {"surprise": 0.0, "field": None}
     # singleton discipline: follow P1's epoch; stop if it moves.
     from src.common import epoch as epoch_mod
@@ -176,6 +226,7 @@ def main() -> int:
     def on_surprise(topic, obj):
         state["surprise"] = obj.s_t
         runner.surprise_hist.append(float(obj.s_t))
+        _save_runner_state()
 
     def on_field(topic, obj):
         # L2 目前还在 P1 内广播；这里先接收它的 16 维
