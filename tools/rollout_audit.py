@@ -108,61 +108,88 @@ def rollout_distributions(counts: dict, vocab: set, start: int, k_max: int,
 
 def evaluate(seq: list[int], ks=KS, points: int = 400,
              smoothing: float = SMOOTHING, seed: int = 0) -> dict:
-    """前 60% 拟合，后 40% 打分。"""
-    split = max(int(len(seq) * 0.6), 2)
-    train, test = seq[:split], seq[split:]
-    counts, vocab, _ = build(train)
-    V = max(len(vocab), 1)
-    marg = collections.Counter(int(x) for x in train)
-    n_marg = float(sum(marg.values()))
+    """前向（prequential）评估，两个视图。
 
-    def p_marg(t: int) -> float:
-        return (marg.get(int(t), 0.0) + smoothing) / (n_marg + smoothing * V)
+    2026-11-16：和 `departure_audit` 一样，一开始用的是「前 60% 拟合 / 后 40% 打分」。
+    她的世界一直在长新区域，按时间切分时测试段 95% 的起点是训练段没见过的，
+    分数失真。改成前向：每走一步就把刚走过的转移并进表里，再预测接下来的 k 步。
 
-    same_freq: dict[int, float] = {}
-    for k in ks:
-        same_freq[k] = sum(1 for a, b in zip(train, train[k:]) if a == b) / max(len(train) - k, 1)
-
+    两个视图：
+      all    所有起点，预测 k 步后落在哪
+      moved  只算「k 步后确实离开了起点」的样本，预测落点。
+             79% 的步原地不动，落点问题的分数一直被这部分盖住；给定离开之后，
+             那才是转移表该赢的地方。
+    """
     k_max = max(ks)
-    hi = len(test) - k_max
-    if hi <= 0:
-        return {"error": "test segment too short"}
-    rng = random.Random(seed)
-    idx = sorted(rng.sample(range(hi), min(points, hi)))
+    warmup = max(int(len(seq) * 0.3), 50)
+    if len(seq) - warmup <= k_max:
+        return {"error": "sequence too short"}
 
-    top_marg = marg.most_common(1)[0][0]
-    out: dict[int, dict] = {k: {"n": 0, "bits": {"rollout": 0.0, "marginal": 0.0, "same": 0.0},
-                                "same_rate": 0.0, "top_marginal_rate": 0.0} for k in ks}
+    counts: dict[int, collections.Counter] = collections.defaultdict(collections.Counter)
+    vocab: set[int] = set(seq[:warmup])
+    marg: collections.Counter = collections.Counter()
+    for a, b in zip(seq[:warmup], seq[1:warmup + 1]):
+        counts[int(a)][int(b)] += 1
+        marg[int(b)] += 1
+
+    rng = random.Random(seed)
+    lo, hi = warmup, len(seq) - k_max
+    idx = sorted(rng.sample(range(lo, hi), min(points, hi - lo)))
+
+    acc: dict[int, dict] = {
+        k: {"n": 0, "n_moved": 0,
+            "bits_all": 0.0, "bits_moved": 0.0, "bits_moved_marg": 0.0,
+            "same_rate": 0} for k in ks
+    }
+    cursor = warmup
     for i in idx:
-        start = int(test[i])
-        # 一个起点只推一次，所有 k 共用这串分布。
+        for j in range(cursor, i):
+            counts[int(seq[j])][int(seq[j + 1])] += 1
+            vocab.add(int(seq[j]))
+            vocab.add(int(seq[j + 1]))
+            marg[int(seq[j + 1])] += 1
+        cursor = max(cursor, i)
+
+        start = int(seq[i])
+        V = max(len(vocab), 1)
+        n_marg = float(sum(marg.values())) or 1.0
         dists = rollout_distributions(counts, vocab, start, k_max, smoothing)
         for k in ks:
-            target = int(test[i + k])
+            target = int(seq[i + k])
             C, nxt = dists[k]
-            p = max(C + nxt.get(target, 0.0), 1e-12)
-            d = out[k]
-            d["bits"]["rollout"] += -math.log2(p)
-            d["bits"]["marginal"] += -math.log2(p_marg(target))
-            q = min(max(same_freq[k], 0.02), 0.98)
-            p_same = q if target == start else (1.0 - q) / max(V - 1, 1)
-            d["bits"]["same"] += -math.log2(max(p_same, 1e-12))
+            p = C + nxt.get(target, 0.0)
+            d = acc[k]
+            d["bits_all"] += -math.log2(max(p, 1e-12))
             d["same_rate"] += int(target == start)
-            d["top_marginal_rate"] += int(target == top_marg)
+            if target != start:
+                # 给定离开：条件分布 = 联合 / P(离开)
+                stay = C + nxt.get(start, 0.0)
+                p_leave = max(1.0 - stay, 1e-9)
+                p_cond = p / p_leave
+                p_m = (marg.get(target, 0) + smoothing) / (n_marg + smoothing * V)
+                d["bits_moved"] += -math.log2(max(p_cond, 1e-12))
+                d["bits_moved_marg"] += -math.log2(max(p_m, 1e-12))
+                d["n_moved"] += 1
             d["n"] += 1
+
+    out: dict[int, dict] = {}
     for k in ks:
-        d = out[k]
+        d = acc[k]
         n = max(d["n"], 1)
+        nm = max(d["n_moved"], 1)
         out[k] = {
             "n": d["n"],
-            "bits": {name: round(v / n, 4) for name, v in d["bits"].items()},
-            "gain_over_marginal": round((d["bits"]["marginal"] - d["bits"]["rollout"]) / n, 4),
+            "n_moved": d["n_moved"],
             "same_rate": round(d["same_rate"] / n, 4),
-            "top_marginal_rate": round(d["top_marginal_rate"] / n, 4),
+            "bits_all": round(d["bits_all"] / n, 4),
+            "bits_moved": round(d["bits_moved"] / nm, 4),
+            "bits_moved_marg": round(d["bits_moved_marg"] / nm, 4),
+            "gain_moved": round((d["bits_moved_marg"] - d["bits_moved"]) / nm, 4),
         }
     return {
-        "train": len(train),
-        "test": len(test),
+        "mode": "prequential",
+        "warmup": warmup,
+        "points": len(idx),
         "vocab": len(vocab),
         "by_k": out,
     }
@@ -202,18 +229,16 @@ def main(argv: list[str]) -> int:
         print(json.dumps(r, ensure_ascii=False))
         return 0
 
-    print(f"steps={r['steps']}  distinct regions={r['distinct_regions']}  "
-          f"train={r['train']}  test={r['test']}  vocab={r['vocab']}")
-    print(f"{'k':>3}{'rollout':>12}{'marginal':>12}{'same':>12}{'gain':>12}"
-          f"{'P(same)':>10}{'P(top)':>10}")
+    print(f"steps={r['steps']}  regions={r['distinct_regions']}  "
+          f"warmup={r['warmup']}  points={r['points']}  vocab={r['vocab']}")
+    print(f"{'k':>3}{'all':>10}{'moved':>10}{'marg':>10}{'gain':>10}{'n_moved':>9}{'P(same)':>9}")
     for k in sorted(r["by_k"]):
         d = r["by_k"][k]
-        b = d["bits"]
-        print(f"{k:>3}{b['rollout']:>12.4f}{b['marginal']:>12.4f}{b['same']:>12.4f}"
-              f"{d['gain_over_marginal']:>12.4f}{d['same_rate']:>10.4f}"
-              f"{d['top_marginal_rate']:>10.4f}")
-    print("\ngain = marginal_bits - rollout_bits（正 = 她的多步分布比边际更准）")
-    print("判据：gain 随 k 增长但不爆（不是指数崩掉），且 k>=4 时仍为正")
+        print(f"{k:>3}{d['bits_all']:>10.4f}{d['bits_moved']:>10.4f}{d['bits_moved_marg']:>10.4f}"
+              f"{d['gain_moved']:>10.4f}{d['n_moved']:>9}{d['same_rate']:>9.4f}")
+    print("\nall   = 所有起点，预测落点（会被「她还在原地」盖住）")
+    print("moved = 只算确实离开了的样本，预测落点（转移表该赢的地方）")
+    print("gain  = marginal_bits - rollout_bits（正 = 比边际更准）")
     return 0
 
 
