@@ -379,6 +379,11 @@ class StateSpace:
 
         # 折叠汇总：被折叠区域的 (量化质心, 深度累加, 计数)，用于载体有界。
         self._folded: list[dict] = []
+        # 外置记忆（2026-11-16 深夜）。`_folded` 只是索引/摘要；被折掉的区域的
+        # **完整内容**写到这里，append-only，可以翻回来。白默的话：
+        # 「遗忘的部分是要保存在数据库作为外置的，就像人记不住那么多但是可以一直记笔记」。
+        # 由 P2 在启动时注入；None 表示不记（测试里默认如此）。
+        self.external_memory = None
         # Recovery cadence hint, set by the caller (Stream) so recovery can
         # relate a rate to a number of steps.
         self._recover_every_hint: int = 16
@@ -1077,6 +1082,12 @@ class StateSpace:
                     "amp": float(a.amp),
                     "count": int(getattr(a, "_assigned", 0)),
                 })
+                # 完整的那一份写进笔记本（外置，append-only）。上面那份是索引。
+                if self.external_memory is not None:
+                    try:
+                        self.external_memory.append(a, reason="fold")
+                    except Exception:  # noqa: BLE001
+                        pass
             else:
                 keep.append(a)
         before = len(self._attractors)

@@ -282,6 +282,15 @@ def main() -> int:
     # 恢复她此刻的形状（不是重放历史）
     restored = persist.restore_all({"l5": stream})
 
+    # 2026-11-16 深夜：外置记忆。被折掉的区域完整地记在 data/memory/folded.jsonl，
+    # `_folded` 只当索引。白默的话：「遗忘的部分是要保存在数据库作为外置的，
+    # 就像人记不住那么多但是可以一直记笔记」。append-only，不改写。
+    from src.common.external_memory import ExternalMemory
+    _ext = ExternalMemory("data/memory/folded.jsonl")
+    stream.landscape.state_space.external_memory = _ext
+    print(f"[P2] external memory: {_ext.path} "
+          f"({_ext.count()} records, {_ext.size_bytes()} bytes)")
+
     # ---- append-only journal: the checkpoint compresses the past, the journal
     # ---- is what happened after it. Replay makes the rollback window zero up to
     # ---- the last record (one step), instead of 60 s.
