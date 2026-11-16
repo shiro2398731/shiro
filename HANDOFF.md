@@ -1164,3 +1164,38 @@ def _carrier_bytes(_st=stream):
 
 下一个接手的人不必再扫一遍：要判断一个能力是否真的在线，先看它是不是 0 字节，
 再看它有没有被 `process_*.py` 或 `stream.py` 引用。**两者都过才算接了线。**
+
+---
+
+## 21. P3 的 fenced 退出：20 次启动 20 次退出，多数正常（2026-11-16 晚）
+
+查运维时看到 `P3.log` 里 20 次 `fenced, stopping`，正好等于 20 次启动。逐条看：
+
+    [P3] fenced, stopping (ledger epoch=21 retired=True;  mine=21)
+    [P3] fenced, stopping (ledger epoch=22 retired=True;  mine=22)
+    [P3] fenced, stopping (ledger epoch=23 retired=False; mine=23)
+    [P3] fenced, stopping (ledger epoch=25 retired=False; mine=24)
+    [P3] fenced, stopping (ledger epoch=25 retired=False; mine=25)
+
+前两条 `retired=True` 是正常停止。第三、四条是 epoch 不匹配（别人接管了）。
+
+**第五条是可疑的**：`epoch=25 retired=False; mine=25` —— 按 `is_current` 的规则
+（`state.epoch == epoch and not state.retired`）它应该继续跑，却退出了。
+
+`epoch.is_current()` 每次先 `load()` 一次账本，P1 在启动时也在写账本
+（`acquire` + `retire` 旧 epoch）。所以存在一个窗口：P3 读到的是**写入中途**的状态。
+第五条大概率是这个竞态：它检查那一刻读到的是 `retired=True`（或 epoch 不是 25），
+等到打印诊断时再 `load()` 一次，账本已经回到 `25/False`，于是日志看起来自相矛盾。
+
+### 影响
+
+- keeper 30 秒内会把它拉起来，所以不会长期缺位（今天的 keeper 日志：每次 recovered 都在
+  4.4–4.5 秒）；
+- 但它意味着**每次 P1 重启都会连带让 P3 退一次**，这不是设计意图；
+- 阶段记录现在会持久化了（今天加的），所以重启不再丢阶段——但会被这次多余的重启拖慢。
+
+### 建议（未做）
+
+`epoch.is_current()` 不要直接读文件，或者加一个「读到 retired=True 时重读一次」的短重试。
+它每 tick 调一次，加一次重读的代价很小。改的是竞态窗口，不是语义，但要单独验证
+「P1 重启时 P3 不再退出」这条，今天只记下来。
