@@ -41,6 +41,7 @@ plug-in 互信息也打印，但标了 [biased]：它在样本稀疏时严重上
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import random
 import sys
@@ -62,6 +63,13 @@ def run(steps: int, amplitude: float = 0.02, seed: int = 0) -> dict:
 
     probe = GroundingTable()
     recs: list = []                    # (current region, previous region, context or None)
+    _prev_n = None                     # 上一次的区域数，用来判断结构是否变少
+    before_keys = set(st.grounding.counts)   # 引擎表带着存档里的历史，自检只比新增
+    # 分桶要用同一段历史。引擎的 `_hist` 是从存档继承的，探针若从空历史开始，
+    # 前 MIN_HIST 步它分不出桶，那段观测只进引擎、不进探针——接线自检会因此
+    # 永远为假。把历史抄一份过去，两边从第一步起就是同一套分桶。
+    probe._hist = {k: collections.deque(v, maxlen=probe.hist)
+                   for k, v in st.grounding._hist.items()}
 
     for _ in range(steps):
         st.landscape.set_noise_amplitude(amplitude)
@@ -78,9 +86,18 @@ def run(steps: int, amplitude: float = 0.02, seed: int = 0) -> dict:
         recs.append((int(aid), prev, ctx))
         if ctx is not None:
             probe.observe(int(aid), ctx)
+        # 引擎的指代表会随折叠 / recover 剪枝（Stream.step）。探针必须同样剪，
+        # 否则「引擎表 == 探针表」这条自检在第一次删区之后永远为假。
+        _n = len(st.landscape.state_space.attractors())
+        if _prev_n is not None and _n < _prev_n:
+            probe.prune(st.landscape.state_space.alive_uids())
+        _prev_n = _n
 
     mi_engine = st.grounding.mutual_information()
     mi_probe = probe.mutual_information()
+    # 接线自检：引擎表带着存档里的历史，探针从零开始，两者的 MI 本来就不该相等。
+    # 该比的是「这次跑出来新增了哪些符号」——两边必须一模一样。
+    engine_new = set(st.grounding.counts) - before_keys
 
     ctx_rows = [(c, ctx) for c, _p, ctx in recs if ctx is not None]
     ctx_only = [ctx for _c, ctx in ctx_rows]
@@ -124,7 +141,7 @@ def run(steps: int, amplitude: float = 0.02, seed: int = 0) -> dict:
         "ratio_over_null": round(mi_probe / mi_null, 2) if mi_null > 0 else None,
         "coverage": round(probe.coverage(), 4),
         "top_symbols": top,
-        "wiring_consistent": abs(mi_engine - mi_probe) < 1e-9,
+        "wiring_consistent": engine_new == set(probe.counts),
         "heldout": heldout,
     }
 
@@ -150,7 +167,7 @@ def main(argv: list[str]) -> int:
           f"H(context)={r['h_context_bits']:.4f} bits")
     print(f"plug-in MI={r['mi_probe_bits']:.4f} bits  shuffled={r['mi_shuffled_bits']:.4f}"
           f"  ratio={r['ratio_over_null']}x   [biased; judge by held-out below]")
-    print(f"wiring consistent (engine == probe): {r['wiring_consistent']}")
+    print(f"wiring consistent (new symbols, engine == probe): {r['wiring_consistent']}")
 
     ho = r["heldout"]
     print("held-out gain, bits/observation (positive = the symbol helps):")
@@ -176,7 +193,7 @@ def main(argv: list[str]) -> int:
         print(f"  region {t['symbol']:>4}  n={t['count']:>5}  "
               f"referent={t['label']:<8}  specificity={t['specificity']}")
     if not r["wiring_consistent"]:
-        print("MISMATCH: the engine's table and the probe disagree; fix the wiring",
+        print("MISMATCH: the engine recorded different symbols than the probe; fix the wiring",
               file=sys.stderr)
         return 1
     return 0
