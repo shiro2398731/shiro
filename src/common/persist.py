@@ -229,6 +229,23 @@ def build_l5_payload(stream) -> dict:
     # 于是每次重启后她有一段时间只会站着（64 步 @0.59 步/秒 ≈ 2 分钟）。
     tension_history = [float(v) for v in
                        (getattr(stream, "_tension_history", ()) or ())]
+    # 2026-11-17 晚：HANDOFF 第 62 节那次系统排查里，这三个是「跨步累积 + 影响行为 +
+    # 应该延续」的，之前全都没存。
+    #
+    # last_surprise  : 上一步她没预测到的程度。L5Runner.noise_amplitude() 读它，
+    #                  不存的话重启后第一步的噪声是「没有惊讶」。
+    # _dwell/_dwell_region : 她在当前区域待了多少步。影响「预演多远」（REHEARSE_CHECK_EVERY）。
+    # rehearsal_*    : 预演的总数/命中/平凡次数。rehearsal_accuracy 就是它们的比。
+    #                  不存的话重启后命中率归零，而这个数会进她的自我评估。
+    last_surprise = float(getattr(stream, "last_surprise", 0.0) or 0.0)
+    dwell = int(getattr(stream, "_dwell", 0) or 0)
+    dwell_region = getattr(stream, "_dwell_region", None)
+    dwell_region = None if dwell_region is None else int(dwell_region)
+    rehearsal = {
+        "total": int(getattr(stream, "rehearsal_total", 0) or 0),
+        "hits": int(getattr(stream, "rehearsal_hits", 0) or 0),
+        "trivial": int(getattr(stream, "rehearsal_trivial", 0) or 0),
+    }
     attrs = [
         {
             "mu": a.mu, "amp": a.amp,
@@ -258,6 +275,10 @@ def build_l5_payload(stream) -> dict:
         "attractors": attrs,
         "action_counts": action_counts,
         "tension_history": tension_history,
+        "last_surprise": last_surprise,
+        "dwell": dwell,
+        "dwell_region": dwell_region,
+        "rehearsal": rehearsal,
         # 2026-11-16 晚：`ceiling` 从来没有进过存档。它是「单个区域的深度容量」，
         # 决定她能被吸多深（梯度 ∝ amp/sigma²）。改了它但不存，重启就回到默认 1.0，
         # 实测：改成 0.02 后重启，max_amp 立刻回 0.99、ceiling 回 1.0。
@@ -455,6 +476,18 @@ def apply_l5_payload(stream, payload: dict) -> None:
     _ac = payload.get("action_counts")
     if isinstance(_ac, dict) and _ac:
         stream.action_counts = {int(k): int(v) for k, v in _ac.items()}
+    if "last_surprise" in payload:
+        stream.last_surprise = float(payload.get("last_surprise") or 0.0)
+    if "dwell" in payload:
+        stream._dwell = int(payload.get("dwell") or 0)
+    if "dwell_region" in payload:
+        _dr = payload.get("dwell_region")
+        stream._dwell_region = None if _dr is None else int(_dr)
+    _rh = payload.get("rehearsal")
+    if isinstance(_rh, dict) and _rh:
+        stream.rehearsal_total = int(_rh.get("total", 0) or 0)
+        stream.rehearsal_hits = int(_rh.get("hits", 0) or 0)
+        stream.rehearsal_trivial = int(_rh.get("trivial", 0) or 0)
     _th = payload.get("tension_history")
     if isinstance(_th, (list, tuple)) and _th:
         import collections as _c
