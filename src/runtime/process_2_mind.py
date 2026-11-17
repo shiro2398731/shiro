@@ -253,6 +253,9 @@ def main() -> int:
 
     def on_surprise(topic, obj):
         state["surprise"] = obj.s_t
+        # 2026-11-17：交给 Stream，它会记在「她此刻所在的区域」上——那个区域
+        # 让她没预测到过，所以难忘（遗忘曲线的份量来源）。
+        stream.last_surprise = float(obj.s_t)
         runner.surprise_hist.append(float(obj.s_t))
         _save_runner_state()
 

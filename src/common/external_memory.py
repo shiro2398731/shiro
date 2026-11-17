@@ -44,6 +44,22 @@ class ExternalMemory:
         self.path = Path(path)
         self._fh = None
 
+    # ---------- pickle ----------
+
+    # 2026-11-17 早上：这个对象被挂到 `state_space.external_memory` 上，而它手里有一个
+    # 打开的文件句柄（TextIOWrapper），**不能 pickle**。后果是 P2 的存档序列化抛
+    # `TypeError: cannot pickle 'TextIOWrapper' instances`，连挂 5 次之后 supervisor
+    # 放弃重启——她带着一个没有认知层的身体过了将近九个小时。
+    #
+    # 文件句柄是运行时资源，不是状态的一部分：pickle 时只留路径，unpickle 时重新打开。
+
+    def __getstate__(self) -> dict:
+        return {"path": str(self.path)}
+
+    def __setstate__(self, state: dict) -> None:
+        self.path = Path(state.get("path", "data/memory/folded.jsonl"))
+        self._fh = None
+
     # ---------- 写 ----------
 
     def _ensure(self) -> None:

@@ -236,6 +236,9 @@ def build_l5_payload(stream) -> dict:
             # every region look unvisited, which is what fold_auto uses to
             # decide what she has stopped needing.
             "_last_seen_step": int(getattr(a, "_last_seen_step", 0)),
+            # 2026-11-17：这个地方让她「没预测到」过的最大程度。遗忘曲线的份量来源，
+            # 不存的话重启就全归零——她从此分不清「刻骨铭心」和「路过」。
+            "_peak_surprise": float(getattr(a, "_peak_surprise", 0.0)),
             # Stable identity, not a position. See Attractor.uid.
             "uid": int(getattr(a, "uid", 0)),
         }
@@ -477,6 +480,12 @@ def apply_l5_payload(stream, payload: dict) -> None:
         # When she was last here. 0 = unknown (legacy record); fold_auto treats
         # unknown as "cannot be shown to be overdue" rather than as "long ago".
         a._last_seen_step = int(d.get("_last_seen_step", 0))
+        # 2026-11-17：读回「这个地方让她没预测到过的最大程度」。
+        # 旧存档没有这个字段 -> 0.0，等于「没被惊讶过」，和「路过」一样。
+        try:
+            a._peak_surprise = float(d.get("_peak_surprise", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            a._peak_surprise = 0.0
         # Legacy records have no uid; 0 means "assign below", after the whole
         # table is built (the number depends on the order of this loop).
         a.uid = int(d.get("uid", 0) or 0)

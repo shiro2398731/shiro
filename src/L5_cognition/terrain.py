@@ -144,6 +144,11 @@ class Attractor:
     # which is a bounded buffer and stops counting at 64. Needed to measure
     # how often this region is actually reached (see L4_drive/viability.py).
     _assigned: int = 0
+    # 2026-11-17：这个区域让她「没预测到」过的最大程度。
+    # 白默的话：「刻骨铭心的东西很难忘掉」。技术上，一件事为什么难忘？
+    # 因为它出乎意料——surprise 就是「她没预测到」。所以用它当这个区域的「份量」：
+    # 份量越大，遗忘曲线越平（τ 越大），越难被折。
+    _peak_surprise: float = 0.0
     # Step index at which this region was created. Visit rate has to be measured
     # over the region's own lifetime; using the total step count as the
     # denominator makes every young region look almost never visited, which
@@ -764,7 +769,8 @@ class StateSpace:
 
     # ---------- observation ----------
 
-    def record(self, x: np.ndarray, t_event: str | None = None) -> Optional[Attractor]:
+    def record(self, x: np.ndarray, t_event: str | None = None,
+               surprise: float | None = None) -> Optional[Attractor]:
         """
         Register one observed state.
 
@@ -806,6 +812,15 @@ class StateSpace:
             # When she was last here. Set here rather than in assign(), because
             # the step index belongs to the space, not to the region.
             a._last_seen_step = int(self._total_steps)
+            # 2026-11-17：记下「这个地方让她没预测到过」的最大程度。
+            # 这是遗忘曲线的份量来源——刻骨铭心 = 高惊讶 = τ 大 = 最后才被折。
+            if surprise is not None:
+                try:
+                    _s = abs(float(surprise))
+                    if _s > float(getattr(a, "_peak_surprise", 0.0)):
+                        a._peak_surprise = _s
+                except (TypeError, ValueError):
+                    pass
             headroom = max(self.ceiling - a.amp, 0.0)
             a.amp += headroom * self.assign_ratio
             return a
@@ -1195,7 +1210,38 @@ class StateSpace:
         #   最多 5%   区域 198  边 197  张力 62  离开率 27%（两个种子都过 64 边）
         #
         # 取最久没去的那一批（按 overdue 降序），而不是按表里的顺序。
-        ids.sort(key=lambda i: -(now - int(getattr(self._attractors[i], "_last_seen_step", 0))))
+        # 2026-11-17：按遗忘曲线排序——不是「谁最久没去」，是「谁最该忘」。
+        #
+        #     Δt_i = now - last_seen_i
+        #     τ_i  = 基线 × (1 + 惊讶份量_i / 典型惊讶)
+        #
+        # 惊讶份量大的区域 τ 大，Δt/τ 小，排在后面——**刻骨铭心的最后才被折**。
+        # 基线和典型惊讶都从她自己的数据来：
+        #   基线     = 她自己所有区域 interval 的中位（「一个普通区域她多久去一次」）
+        #   典型惊讶 = 她自己在这些区域上经历过的惊讶的中位
+        _est = []
+        for _a in self._attractors:
+            _n = int(getattr(_a, "_assigned", 0))
+            if _n < MIN_ASSIGN_FOR_INTERVAL:
+                continue
+            _life = max(now - int(getattr(_a, "_born_step", 0)), 1)
+            _est.append(_life / float(_n))
+        _tau_base = float(np.median(_est)) if _est else float(wait)
+        _peaks = [float(getattr(_a, "_peak_surprise", 0.0)) for _a in self._attractors]
+        if _peaks:
+            _peak_med = float(np.median(_peaks))
+            if _peak_med <= 1e-12:
+                _peak_med = float(np.mean(_peaks)) if float(np.mean(_peaks)) > 1e-12 else 1.0
+        else:
+            _peak_med = 1.0
+
+        def _score(i: int) -> float:
+            a = self._attractors[i]
+            dt = now - int(getattr(a, "_last_seen_step", 0))
+            tau = _tau_base * (1.0 + float(getattr(a, "_peak_surprise", 0.0)) / _peak_med)
+            return dt / max(tau, 1e-9)
+
+        ids.sort(key=lambda i: -_score(i))
         limit = max(1, int(len(self._attractors) * 0.05))
         ids = ids[:limit]
         removed = self.apply_fold(ids)

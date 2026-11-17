@@ -185,9 +185,14 @@ class Landscape:
 
     # ---------- observation and recovery ----------
 
-    def record(self, x: np.ndarray, t_event: str | None = None):
-        """Register one observed state in the state space."""
-        return self.state_space.record(x, t_event)
+    def record(self, x: np.ndarray, t_event: str | None = None,
+               surprise: float | None = None):
+        """Register one observed state in the state space.
+
+        `surprise` 传下去给 StateSpace.record，用来给「她此刻所在的区域」记份量
+        （2026-11-17：一个地方让她没预测到过，它就难忘——遗忘曲线的来源）。
+        """
+        return self.state_space.record(x, t_event, surprise=surprise)
 
     # Compatibility alias.
     def pass_through(self, x: np.ndarray, t_event: str | None = None):

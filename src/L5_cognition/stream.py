@@ -104,6 +104,11 @@ class Stream:
         # to a number of steps.
         self.landscape.state_space._recover_every_hint = self._recover_every
         self._step_count = 0
+
+        # 2026-11-17：最近一次惊讶。只用来给「她此刻所在的区域」记份量
+        # （见 Attractor._peak_surprise）：一个地方让她没预测到过，它就难忘。
+        # 由 P2 在收到 l1.state.surprise 时写入；Stream 自己不产生惊讶。
+        self.last_surprise = 0.0
         self._last_ignition: Optional[Ignition] = None
 
         # ---- L3 memory: connectivity structure over the state space ----
@@ -263,7 +268,8 @@ class Stream:
 
         # Register the observed state.
         a = self.landscape.record(
-            self._st.x, datetime.now(timezone.utc).isoformat()
+            self._st.x, datetime.now(timezone.utc).isoformat(),
+            surprise=self.last_surprise,
         )
 
         # Swing advances from the position the state is in now, before the
