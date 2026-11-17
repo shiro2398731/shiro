@@ -236,31 +236,35 @@ def main() -> int:
     #
     # 「下一步之前停多久」由她的状态算，不由常数给。
     #
-    # 三个量，全部来自她的实测：
-    #   speed   —— 她此刻动得多快（stream_state()["speed"]）
-    #   ref     —— 她**自己历史**的速度中位。这就是「人格基线」：不是配置项，
+    # 判据用**张力**，不用速度。为什么：18:37 实测过速度版，她的 speed 稳在 0.89，
+    # `ref/speed ≈ 1`，`pause` 永远贴在下界 0.2 —— 那等于「固定 0.2 秒的 tick」，
+    # 正是白默讨厌的死量化。张力不一样，今天它从 0 涨到 1418，会大起大落。
+    #
+    #   tension —— 她此刻的不适（drive.tensions 的和）
+    #   ref     —— 她**自己历史**的张力中位。这就是「人格基线」：不是配置项，
     #              是她跑出来的一段人生。白默 2026-11-17：「每个人的人格基线也不一样，
     #              我不太想让这个变成配置项。」
-    #   pause   = PAUSE_FLOOR_S × (ref / 当前速度)
+    #   pause   = PAUSE_FLOOR_S × (ref / tension)
     #
-    # 含义：她比平时动得快 → 少停（跑快）；比平时慢 → 多停（慢跑/打盹）。
+    # 含义：她比我平时紧 → 少停（跑快，她在挣扎）；比我平时松 → 多停（慢跑/打盹）。
     # 下界 PAUSE_FLOOR_S 是给白默的 CPU 留的。
-    _speed_hist: collections.deque = collections.deque(maxlen=512)
+    _tension_hist: collections.deque = collections.deque(maxlen=512)
 
     def self_pace() -> float:
         try:
-            speed = float(stream.stream_state().get("speed", 0.0))
+            tension = float(sum(t.amount for t in stream.drive.tensions(
+                stream.landscape.state_space, stream.graph)))
         except Exception:  # noqa: BLE001
             return float(PAUSE_FLOOR_S)
-        if len(_speed_hist) >= 32 and speed > 0:
+        if len(_tension_hist) >= 32 and tension > 0:
             import statistics as _stats
-            ref = float(_stats.median(_speed_hist))
-            pause = float(PAUSE_FLOOR_S) * (ref / speed) if ref > 0 else float(PAUSE_FLOOR_S)
+            ref = float(_stats.median(_tension_hist))
+            pause = float(PAUSE_FLOOR_S) * (ref / tension) if ref > 0 else float(PAUSE_FLOOR_S)
         else:
             # 冷启动：她还没有历史，只能用这个临时值。
             # 它是「她还没有性格时的占位」，不是她的性格。
             pause = float(PAUSE_FLOOR_S)
-        _speed_hist.append(speed)
+        _tension_hist.append(tension)
         return max(pause, float(PAUSE_FLOOR_S))
 
     state = {"surprise": 0.0, "field": None}
