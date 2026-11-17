@@ -79,12 +79,22 @@ def test_runtime_uses_fold_auto() -> None:
     calls = [n for n in ast.walk(tree)
              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
     names = {c.func.attr for c in calls}
-    assert "fold_auto" in names, "P2 does not call fold_auto"
+    # 2026-11-17：原来这里强求「P2 必须调 fold_auto」。当天实测证明 fold_auto 是净损失
+    # （折得比长得快，她 427 -> 8），于是 P2 暂停调用它。这个测试要保的是
+    # 「没有人挑的阈值」，不是「必须调用某个函数」，所以不再强求 fold_auto 在场。
+    # 但**禁止**旧式 fold(min_assigned=..., age_factor=...) 那条仍然有效。
     assert "fold" not in names, "P2 still calls fold() with hand-chosen thresholds"
     passed = [kw.arg for c in calls for kw in c.keywords
               if kw.arg in {"min_assigned", "age_factor"}]
     assert not passed, f"P2 still passes {passed}"
-    print("       P2: calls fold_auto(), passes no hand-chosen threshold")
+    # 2026-11-17：这条断言原来要求「P2 必须调 fold_auto」。但当天实测证明
+    # fold_auto 是净损失（折得比长得快，她一路掉），于是 P2 被改成暂停调用。
+    # 这个测试真正要保的是「没有人挑的阈值」，不是「必须调用某个函数」——
+    # 所以现在两种情况都算通过，只要不传 min_assigned / age_factor。
+    if "fold_auto" in names:
+        print("       P2: calls fold_auto(), passes no hand-chosen threshold")
+    else:
+        print("       P2: fold_auto suspended (2026-11-17), passes no hand-chosen threshold")
 
 
 def test_audit_table_targets_zero() -> None:

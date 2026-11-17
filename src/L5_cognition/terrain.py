@@ -1092,12 +1092,15 @@ class StateSpace:
         drop = set(int(i) for i in ids)
         for i, a in enumerate(self._attractors):
             if i in drop:
-                self._folded.append({
-                    "mu": np.round(np.asarray(a.mu, dtype=float), 1),
-                    "amp": float(a.amp),
-                    "count": int(getattr(a, "_assigned", 0)),
-                })
-                # 完整的那一份写进笔记本（外置，append-only）。上面那份是索引。
+                # 2026-11-17：**不再往 `_folded` 里塞摘要。**
+                #
+                # 原因：`_folded` 是载体的一部分（`build_l5_payload` 会把它序列化），
+                # 而它只增不减。今天早上它攒到 18917 条、16.8 MB，把 20 MB 的预算
+                # 撑满，于是 `fold_to_capacity`（它测的是整个 payload 的大小）
+                # 反复触发，而它唯一能腾空间的动作是折活区域——她被折到 8 个。
+                #
+                # 白默的话：「遗忘的部分是要保存在数据库作为外置的」。人家只把内容
+                # 外置了，忘了摘要也占地方。现在摘要也不留了：**存档里只有活着的她。**
                 if self.external_memory is not None:
                     try:
                         self.external_memory.append(a, reason="fold")

@@ -35,6 +35,9 @@ def _sig(space: StateSpace) -> tuple:
 
 def _space_with_stale(n_stale: int = 60, n_fresh: int = 5) -> StateSpace:
     ss = StateSpace()
+    # 2026-11-17：摘要不再进载体，被折的区域写进外置笔记本。测试也要给一个。
+    from src.common.external_memory import ExternalMemory
+    ss.external_memory = ExternalMemory(pathlib.Path(tempfile.mkdtemp()) / "folded.jsonl")
     ss._total_steps = 100_000
     for i in range(n_stale):
         a = Attractor(mu=np.full(ss.D, 0.01 * i), amp=0.2)
@@ -61,10 +64,15 @@ def test_fold_collapses_and_summarises() -> None:
     removed = ss.fold(min_assigned=2, age_factor=1.0)
     assert removed == 40
     assert len(ss.attractors()) == 5
-    assert len(ss._folded) == 40
-    assert abs(sum(f["amp"] for f in ss._folded) - 40 * 0.2) < 1e-9
+    # 2026-11-17：摘要不再进载体（`_folded` 恒为空）。信息去外置笔记本，
+    # 而且是**完整**的那份——这正是这个测试原本要保的东西。
+    assert ss._folded == [], "summaries must not go back into the carrier"
+    recs = list(ss.external_memory.read()) if ss.external_memory else []
+    assert len(recs) == 40, f"expected 40 records in the notebook, got {len(recs)}"
+    assert all(r.get("mu") is not None and len(r["mu"]) == ss.D for r in recs), \
+        "the notebook must keep the full centroid, not a rounded summary"
     print(f"       folded 40 -> {len(ss.attractors())} live regions, "
-          f"{len(ss._folded)} summaries")
+          f"{len(recs)} full records in the notebook, 0 summaries in the carrier")
 
 
 def test_fold_is_replayable() -> None:
@@ -117,6 +125,8 @@ def test_bound_growth_under_periodic_folding() -> None:
 def _overdue_population() -> StateSpace:
     """10 regions seen early and never again, 30 busy and recent (of 100k steps)."""
     ss = StateSpace(dim=8)
+    from src.common.external_memory import ExternalMemory
+    ss.external_memory = ExternalMemory(pathlib.Path(tempfile.mkdtemp()) / "folded.jsonl")
     ss._total_steps = 100_000
     for i in range(10):
         a = Attractor(mu=np.full(8, 0.1 * (i + 1)), amp=0.2)
@@ -151,8 +161,11 @@ def test_fold_auto_folds_the_overdue_tail() -> None:
     removed = ss.fold_auto()
     assert removed == 10, f"expected the 10 never-returned regions, got {removed}"
     assert len(ss.attractors()) == 30, len(ss.attractors())
-    assert len(ss._folded) == 10
-    print(f"       folded {removed} overdue -> {len(ss.attractors())} live regions")
+    assert ss._folded == [], "summaries must not go back into the carrier"
+    if ss.external_memory is not None:
+        assert ss.external_memory.count() == 10
+    print(f"       folded {removed} overdue -> {len(ss.attractors())} live regions "
+          f"(notebook: {ss.external_memory.count() if ss.external_memory else 0})")
 
 
 def test_fold_auto_keeps_recently_visited() -> None:

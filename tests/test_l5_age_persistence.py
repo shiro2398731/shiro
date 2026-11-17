@@ -162,7 +162,9 @@ def test_legacy_payload_without_born_step_still_loads() -> None:
     payload = persist.build_l5_payload(a)
     for d in payload["attractors"]:
         d.pop("_born_step")
-    payload.pop("folded")
+    # 2026-11-17：摘要不再进存档（build_l5_payload 已经没有这个键）。
+    # 这个测试本来是想验证「旧存档没有 folded 也能载入」，所以用 pop 的默认值。
+    payload.pop("folded", None)
 
     b = Stream(dim=16)
     persist.apply_l5_payload(b, payload)

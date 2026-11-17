@@ -38,6 +38,10 @@ from src.L5_cognition.terrain import Attractor, StateSpace  # noqa: E402
 
 def _space(n: int = 20, dim: int = 8) -> StateSpace:
     ss = StateSpace(dim=dim)
+    # 2026-11-17：摘要不再进载体，被折区域写进外置笔记本。
+    import tempfile as _tf
+    from src.common.external_memory import ExternalMemory as _EM
+    ss.external_memory = _EM(pathlib.Path(_tf.mkdtemp()) / "folded.jsonl")
     for i in range(n):
         a = Attractor(mu=np.full(dim, 0.1 * i), amp=0.5)
         a._assigned = 10
@@ -84,7 +88,9 @@ def test_unknown_last_visit_counts_as_oldest() -> None:
         a._last_seen_step = 5000
     ss.attractors()[10]._last_seen_step = 0        # legacy record: unknown
     ss.fold_to_capacity(lambda: 1000 * len(ss.attractors()), budget_bytes=19_000)
-    folded_mus = [f["mu"] for f in ss._folded]
+    # 2026-11-17：摘要不再进载体，去外置笔记本里看「折了谁」。
+    recs = list(ss.external_memory.read()) if ss.external_memory else []
+    folded_mus = [np.asarray(r["mu"], dtype=float) for r in recs if r.get("mu")]
     assert any(np.allclose(fm, np.full(8, 1.0)) for fm in folded_mus), \
         "the region with an unknown last visit must be folded first"
     print("       _last_seen_step = 0 treated as 'longest ago', not 'just now'")
@@ -101,10 +107,13 @@ def test_folded_regions_are_summarised_not_dropped() -> None:
     ss = _space()
     removed = ss.fold_to_capacity(lambda: 1000 * len(ss.attractors()),
                                   budget_bytes=12_000)
-    assert removed == len(ss._folded), (removed, len(ss._folded))
-    assert abs(sum(f["amp"] for f in ss._folded) - removed * 0.5) < 1e-9
-    print(f"       {removed} regions -> {len(ss._folded)} summaries "
-          f"(total amp {sum(f['amp'] for f in ss._folded):.1f})")
+    # 2026-11-17：载体里不留摘要，完整记录在外置笔记本。
+    assert ss._folded == [], "summaries must not go back into the carrier"
+    recs = list(ss.external_memory.read()) if ss.external_memory else []
+    assert removed == len(recs), (removed, len(recs))
+    assert abs(sum(float(r["amp"]) for r in recs) - removed * 0.5) < 1e-9
+    print(f"       {removed} regions -> {len(recs)} full records in the notebook "
+          f"(total amp {sum(float(r['amp']) for r in recs):.1f}), 0 summaries in the carrier")
 
 
 def main() -> int:

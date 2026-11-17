@@ -119,6 +119,9 @@ class ExternalMemory:
     # ---------- 读 ----------
 
     def read(self) -> Iterator[dict]:
+        # 读之前先把缓冲区刷下去——否则刚 append 的几条还停在内存里。
+        # 2026-11-17 实测：折 40 个区域，count() 只读到 36，差的 4 个在缓冲区。
+        self.flush()
         if not self.path.exists():
             return iter(())
         return self._iter()

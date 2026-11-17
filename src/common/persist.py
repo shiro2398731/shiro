@@ -255,10 +255,14 @@ def build_l5_payload(stream) -> dict:
         # 否则压了容量不压门槛，新区域刚生出来就被 recover 删掉（实测：ceiling 0.02 +
         # min_amp 1e-3 掉到 1 个区域；同比例压到 2e-5 则稳定在 111–130）。它也要进存档。
         "min_amp": float(getattr(ls.state_space, "min_amp", 1e-3)),
-        # Collapsed regions. Without this the folded mass disappears on every
-        # restart: apply_l5_payload rebuilds the live table only, so the
-        # archive silently loses every summary fold() has produced.
-        "folded": [dict(f) for f in getattr(ls.state_space, "_folded", [])],
+        # 2026-11-17：**不再把 `_folded` 写进存档。**
+        #
+        # 它曾经是「折叠汇总」，但实测它只增不减：今天早上 18917 条、16.8 MB，
+        # 把 20 MB 的预算撑满，`fold_to_capacity` 只好反复折活区域（她掉到 8 个）。
+        # 而摘要本身没有任何读者——`grep -rn _folded src/` 只有存和取。
+        #
+        # 被折掉的区域**完整地**记在 `data/memory/folded.jsonl`（external_memory），
+        # 那是另一个文件，不进载体。所以这里一个摘要都不留。
         "graph": stream.graph.to_dict(),
         # What the graph's nodes are. Absent means an older checkpoint whose
         # nodes are table indices; the loader converts them (see
@@ -527,7 +531,9 @@ def apply_l5_payload(stream, payload: dict) -> None:
     # Folded summaries. Absent from older checkpoints (nothing had been folded
     # yet when the field was introduced), so a missing key means "none", not
     # "damaged".
-    ls.state_space._folded = [dict(f) for f in (payload.get("folded") or [])]
+    # 旧存档里有 "folded" 键（2026-11-17 之前）。读它只为兼容，不再保留：
+    # 摘要不再进载体，被折区域的完整内容在 data/memory/folded.jsonl。
+    ls.state_space._folded = []
     gs = payload.get("global_scale")
     if gs is not None:
         ls.state_space._global_scale = float(gs)  # legacy field, unused
