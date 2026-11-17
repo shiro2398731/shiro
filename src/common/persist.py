@@ -246,6 +246,10 @@ def build_l5_payload(stream) -> dict:
         "hits": int(getattr(stream, "rehearsal_hits", 0) or 0),
         "trivial": int(getattr(stream, "rehearsal_trivial", 0) or 0),
     }
+    # 她此刻在哪个区域（uid）。_apply_leave 靠它找「她在哪」，不存的话
+    # 重启后第一次「离开」会找不到行、直接返回（等于第一步不能动）。
+    _cur = getattr(getattr(stream, "detector", None), "current_attractor", None)
+    current_region = None if _cur is None else int(_cur)
     attrs = [
         {
             "mu": a.mu, "amp": a.amp,
@@ -279,6 +283,7 @@ def build_l5_payload(stream) -> dict:
         "dwell": dwell,
         "dwell_region": dwell_region,
         "rehearsal": rehearsal,
+        "current_region": current_region,
         # 2026-11-16 晚：`ceiling` 从来没有进过存档。它是「单个区域的深度容量」，
         # 决定她能被吸多深（梯度 ∝ amp/sigma²）。改了它但不存，重启就回到默认 1.0，
         # 实测：改成 0.02 后重启，max_amp 立刻回 0.99、ceiling 回 1.0。
@@ -483,6 +488,14 @@ def apply_l5_payload(stream, payload: dict) -> None:
     if "dwell_region" in payload:
         _dr = payload.get("dwell_region")
         stream._dwell_region = None if _dr is None else int(_dr)
+    if "current_region" in payload:
+        _cr = payload.get("current_region")
+        if _cr is not None and hasattr(stream, "detector"):
+            try:
+                # current_attractor 是只读 property；真正的字段是 _current。
+                stream.detector._current = int(_cr)
+            except Exception:  # noqa: BLE001
+                pass
     _rh = payload.get("rehearsal")
     if isinstance(_rh, dict) and _rh:
         stream.rehearsal_total = int(_rh.get("total", 0) or 0)
