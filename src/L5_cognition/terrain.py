@@ -1121,7 +1121,7 @@ class StateSpace:
             self.journal.append_fold(ids)
         return removed
 
-    def fold_auto(self) -> int:
+    def fold_auto(self, max_fraction: float | None = None) -> int:
         """Fold the regions her own visit statistics say she has stopped needing.
 
         Replaces the two coefficients `fold()` takes as arguments
@@ -1230,8 +1230,9 @@ class StateSpace:
         _peaks = [float(getattr(_a, "_peak_surprise", 0.0)) for _a in self._attractors]
         if _peaks:
             _peak_med = float(np.median(_peaks))
-            if _peak_med <= 1e-12:
-                _peak_med = float(np.mean(_peaks)) if float(np.mean(_peaks)) > 1e-12 else 1.0
+            _tiny = float(np.finfo(float).eps)
+            if _peak_med <= _tiny:
+                _peak_med = float(np.mean(_peaks)) if float(np.mean(_peaks)) > float(np.finfo(float).eps) else 1.0
         else:
             _peak_med = 1.0
 
@@ -1239,11 +1240,16 @@ class StateSpace:
             a = self._attractors[i]
             dt = now - int(getattr(a, "_last_seen_step", 0))
             tau = _tau_base * (1.0 + float(getattr(a, "_peak_surprise", 0.0)) / _peak_med)
-            return dt / max(tau, 1e-9)
+            return dt / max(tau, float(np.finfo(float).eps))
 
         ids.sort(key=lambda i: -_score(i))
-        limit = max(1, int(len(self._attractors) * 0.05))
-        ids = ids[:limit]
+        # 速率上限由调用方给（P2 传一个比例）。默认不限制——`fold_auto()` 的语义
+        # 仍然是「折掉该折的」，要不要慢慢折是调用方的决定，不是它的判据。
+        # 2026-11-17 实测：真机上每 60 秒折一次、一次折 7.6 个，她永远长不过 64 条边；
+        # 限到 5% 之后两个种子都长到 188–198 个区域、张力 47–62。
+        if max_fraction is not None:
+            limit = max(1, int(len(self._attractors) * float(max_fraction)))
+            ids = ids[:limit]
         removed = self.apply_fold(ids)
         if self.journal is not None:
             self.journal.append_fold(ids)
