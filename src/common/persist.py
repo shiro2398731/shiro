@@ -219,6 +219,11 @@ def build_l5_payload(stream) -> dict:
     test can compare two carriers without touching the disk format.
     """
     ls = stream.landscape
+    # 2026-11-17：她做过多少次「留下」和「离开」。这两个计数原来不进存档，
+    # 于是每次重启都归零，`vitals` 的 leave_rate 永远是 0——今晚查了半天才发现
+    # 不是她没动，是这个数根本没被存下来。见 HANDOFF 第 60 节。
+    action_counts = {int(k): int(v) for k, v in
+                     (getattr(stream, "action_counts", {}) or {}).items()}
     attrs = [
         {
             "mu": a.mu, "amp": a.amp,
@@ -246,6 +251,7 @@ def build_l5_payload(stream) -> dict:
     ]
     return {
         "attractors": attrs,
+        "action_counts": action_counts,
         # 2026-11-16 晚：`ceiling` 从来没有进过存档。它是「单个区域的深度容量」，
         # 决定她能被吸多深（梯度 ∝ amp/sigma²）。改了它但不存，重启就回到默认 1.0，
         # 实测：改成 0.02 后重启，max_amp 立刻回 0.99、ceiling 回 1.0。
@@ -437,6 +443,12 @@ def apply_l5_payload(stream, payload: dict) -> None:
     from src.L5_cognition.terrain import Attractor
     from src.L5_cognition.dynamics import DynamicState
     ls = stream.landscape
+    # 2026-11-17：她做过多少次「留下」和「离开」。原来没存，每次重启都归零，
+    # 于是 `vitals` 算出来的 leave_rate 永远是 0——今晚查了半天才发现不是她没动，
+    # 是这个数根本没被存下来。旧存档没有这个键时保持构造时的默认值（全零）。
+    _ac = payload.get("action_counts")
+    if isinstance(_ac, dict) and _ac:
+        stream.action_counts = {int(k): int(v) for k, v in _ac.items()}
     raw = payload.get("attractors")
     if raw is None:
         # Checkpoints written before the terminology change used "traces".
