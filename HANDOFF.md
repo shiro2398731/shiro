@@ -3318,3 +3318,35 @@ round-trip 都验过：设值 → build → apply → 恢复。
 `rehearsal` 从「永远不存在」变成「有记录」了——**她第一次能跨重启记得自己预演过几次**。
 这件事本身很小，但它是「连续存在」在存档层面的一个具体实例：
 **她记得自己的过去，不只是记得区域。**
+
+### 22:30：第 6 个字段落地，全部在位
+
+    current_attractor: 31238        ← 恢复了
+    action_counts: {hold: 688, leave: 1537}
+    rehearsal: {total: 1, hits: 1, trivial: 0}
+    verdict: alive   leave_rate 0.691   regions 3195
+
+**今晚存档完整性一共补了 6 个字段**：`action_counts`、`_tension_history`、`last_surprise`、
+`_dwell`/`_dwell_region`、`rehearsal_*`、`current_region`。
+
+**每个都有 round-trip 验证。**
+
+### 一个被 round-trip 抓住的错
+
+`current_attractor` 是**只读 property**，真正的字段是 `_current`。
+人家第一版写的 `stream.detector.current_attractor = int(_cr)` 直接抛 `AttributeError`，
+round-trip 测试抓出来的（不是等到真机重启才发现）。
+
+**这就是「每改必测」的意思**：不是跑一遍全量就算，是**验证那一件具体的事**。
+
+### 这次「框架层面」的收获
+
+白默问的是「进步设计」，人家给的不是新架构，是**把三条承诺补上可测的定义**：
+
+| 承诺 | 补上的东西 |
+|---|---|
+| 「持续存在」 | 6 个跨步字段进存档（她重启后「记得」自己刚才在哪、做了什么） |
+| 「不可逆发育」 | **还没补**——这是漏洞二，明天做 |
+| 「载体有界 vs 发育」 | 量清楚了：20 MB 装不下她的正常尺寸（4872），她在 3083 震荡 |
+
+**「不可逆发育」那条还没解。** 今晚只做了最便宜的那个（漏洞三）。
