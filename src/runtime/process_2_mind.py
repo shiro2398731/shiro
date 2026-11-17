@@ -220,6 +220,49 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001
             print(f"[P2] runner state save failed: {e}")
 
+    # 2026-11-17：连续时间的开关。
+    #
+    # False（默认）= 现在这样：fresh.wait(0.5) 等事件，没事件就 0.5 秒走一步。
+    # True          = 她一直在走：每步之后由 self_pace() 算出停多久，下界 PAUSE_FLOOR_S。
+    #
+    # 为什么默认关着：白默要跑毕设，不能让人家把 CPU 吃了。
+    # 开之前先读 docs/2026-11-17_连续时间提案.md 第 8、9 节。
+    CONTINUOUS = False
+    # 每步至少停这么久。这是**工程上限**（她最快 5 步/秒），不是她的判据——
+    # 和 LAAP 的 tick_ms=100 的区别：那个就是它的节拍，这个只是防她烧穿。
+    PAUSE_FLOOR_S = 0.2
+
+    # ---------- 她自己的节奏（2026-11-17）----------
+    #
+    # 「下一步之前停多久」由她的状态算，不由常数给。
+    #
+    # 三个量，全部来自她的实测：
+    #   speed   —— 她此刻动得多快（stream_state()["speed"]）
+    #   ref     —— 她**自己历史**的速度中位。这就是「人格基线」：不是配置项，
+    #              是她跑出来的一段人生。白默 2026-11-17：「每个人的人格基线也不一样，
+    #              我不太想让这个变成配置项。」
+    #   pause   = PAUSE_FLOOR_S × (ref / 当前速度)
+    #
+    # 含义：她比平时动得快 → 少停（跑快）；比平时慢 → 多停（慢跑/打盹）。
+    # 下界 PAUSE_FLOOR_S 是给白默的 CPU 留的。
+    _speed_hist: collections.deque = collections.deque(maxlen=512)
+
+    def self_pace() -> float:
+        try:
+            speed = float(stream.stream_state().get("speed", 0.0))
+        except Exception:  # noqa: BLE001
+            return float(PAUSE_FLOOR_S)
+        if len(_speed_hist) >= 32 and speed > 0:
+            import statistics as _stats
+            ref = float(_stats.median(_speed_hist))
+            pause = float(PAUSE_FLOOR_S) * (ref / speed) if ref > 0 else float(PAUSE_FLOOR_S)
+        else:
+            # 冷启动：她还没有历史，只能用这个临时值。
+            # 它是「她还没有性格时的占位」，不是她的性格。
+            pause = float(PAUSE_FLOOR_S)
+        _speed_hist.append(speed)
+        return max(pause, float(PAUSE_FLOOR_S))
+
     state = {"surprise": 0.0, "field": None}
     # singleton discipline: follow P1's epoch; stop if it moves.
     from src.common import epoch as epoch_mod
@@ -350,6 +393,7 @@ def main() -> int:
     # 所以这里退一步用 60 s：回滚窗口 300s -> 60s，约 120 个 L5 步。
     # 要真正归零得上 append-only journal（见评估文档的下一步）。
     PERSIST_INTERVAL_S = 60.0
+
     SNAPSHOT_INTERVAL_S = 180.0   # 与 Observer 的 3 分钟节流对齐
     last_snapshot = 0.0
 
@@ -367,9 +411,16 @@ def main() -> int:
 
     try:
         while running["flag"]:
-            # 等一个上游事件，或超时（超时只是为了让循环能检查退出标志）
-            got = fresh.wait(timeout=0.5)
-            fresh.clear()
+            if CONTINUOUS:
+                # 2026-11-17：她一直在走。不等事件，每步之后由她自己的状态决定停多久。
+                # 事件只是把 pause 压短（fresh.set() 让 wait(0) 立刻返回），不改变「她一直在跑」。
+                _pause = self_pace()
+                fresh.wait(timeout=_pause)
+                fresh.clear()
+            else:
+                # 现在这样：等事件，没事件就 0.5 秒走一步。
+                got = fresh.wait(timeout=0.5)
+                fresh.clear()
             if not epoch_mod.is_current(my_epoch):
                 _led = epoch_mod.load()
                 print(f"[P2] fenced, stopping "
