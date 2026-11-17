@@ -224,6 +224,11 @@ def build_l5_payload(stream) -> dict:
     # 不是她没动，是这个数根本没被存下来。见 HANDOFF 第 60 节。
     action_counts = {int(k): int(v) for k, v in
                      (getattr(stream, "action_counts", {}) or {}).items()}
+    # 她最近 64 步的张力。动作判据（action.py）拿当前张力跟**这 64 步的中位**比；
+    # 不存的话每次重启这段历史是空的，choose() 在没过去可比时返回 HOLD——
+    # 于是每次重启后她有一段时间只会站着（64 步 @0.59 步/秒 ≈ 2 分钟）。
+    tension_history = [float(v) for v in
+                       (getattr(stream, "_tension_history", ()) or ())]
     attrs = [
         {
             "mu": a.mu, "amp": a.amp,
@@ -252,6 +257,7 @@ def build_l5_payload(stream) -> dict:
     return {
         "attractors": attrs,
         "action_counts": action_counts,
+        "tension_history": tension_history,
         # 2026-11-16 晚：`ceiling` 从来没有进过存档。它是「单个区域的深度容量」，
         # 决定她能被吸多深（梯度 ∝ amp/sigma²）。改了它但不存，重启就回到默认 1.0，
         # 实测：改成 0.02 后重启，max_amp 立刻回 0.99、ceiling 回 1.0。
@@ -449,6 +455,11 @@ def apply_l5_payload(stream, payload: dict) -> None:
     _ac = payload.get("action_counts")
     if isinstance(_ac, dict) and _ac:
         stream.action_counts = {int(k): int(v) for k, v in _ac.items()}
+    _th = payload.get("tension_history")
+    if isinstance(_th, (list, tuple)) and _th:
+        import collections as _c
+        stream._tension_history = _c.deque(
+            [float(v) for v in _th], maxlen=stream._tension_history.maxlen)
     raw = payload.get("attractors")
     if raw is None:
         # Checkpoints written before the terminology change used "traces".
