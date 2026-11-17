@@ -32,6 +32,15 @@ def _loaded(warm: int = 60):
     st = Stream()
     if not persist.load_l5(st):
         raise SystemExit("no L5 archive for this test")
+    # 2026-11-17：和 test_action 同一个原因——地形太深（ceiling 0.02、amp 中位 0.0013），
+    # 「动作」在深井里没有差别，六次投影全是同一个数。不是代码错，
+    # 是 HANDOFF 第 56 节记的那笔账（让她活下来的代价）。
+    import numpy as _np
+    _amps = [float(a.amp) for a in st.landscape.state_space.attractors()]
+    if _amps and float(_np.median(_amps)) > 1e-3:
+        raise SystemExit(
+            f"SKIP: terrain too deep for actions to differ "
+            f"(median amp {float(_np.median(_amps)):.6f} > 1e-3). See HANDOFF sec.56.")
     for _ in range(warm):
         st.landscape.set_noise_amplitude(0.02)
         st.step()

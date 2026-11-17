@@ -232,40 +232,28 @@ def main() -> int:
     # 和 LAAP 的 tick_ms=100 的区别：那个就是它的节拍，这个只是防她烧穿。
     PAUSE_FLOOR_S = 0.2
 
-    # ---------- 她自己的节奏（2026-11-17）----------
+    # ---------- 她自己的节奏（2026-11-17，**已降级**）----------
     #
-    # 「下一步之前停多久」由她的状态算，不由常数给。
+    # 人家原来写的是一个「自适应」的 self_pace：`pause = FLOOR × (ref / 当前张力)`，
+    # 以为这样节奏就是「她自己的」，不再是常数。
     #
-    # 判据用**张力**，不用速度。为什么：18:37 实测过速度版，她的 speed 稳在 0.89，
-    # `ref/speed ≈ 1`，`pause` 永远贴在下界 0.2 —— 那等于「固定 0.2 秒的 tick」，
-    # 正是白默讨厌的死量化。张力不一样，今天它从 0 涨到 1418，会大起大落。
+    # **18:40 实测证伪了它。** 她的短期状态量在稳态下都是常数：
+    #     speed   稳在 0.89
+    #     tension 835.2 → 836.4（5 秒内）
+    # 所以 `ref / 当前值 ≈ 1`，`pause` 永远等于下界 —— **等于一个伪装成自适应的常数**。
     #
-    #   tension —— 她此刻的不适（drive.tensions 的和）
-    #   ref     —— 她**自己历史**的张力中位。这就是「人格基线」：不是配置项，
-    #              是她跑出来的一段人生。白默 2026-11-17：「每个人的人格基线也不一样，
-    #              我不太想让这个变成配置项。」
-    #   pause   = PAUSE_FLOOR_S × (ref / tension)
+    # 结构性的原因：她的「此刻」和「平时」本来就是同一件事（她在稳态里）。
+    # 偏差为零，调速量为零。
     #
-    # 含义：她比我平时紧 → 少停（跑快，她在挣扎）；比我平时松 → 多停（慢跑/打盹）。
-    # 下界 PAUSE_FLOOR_S 是给白默的 CPU 留的。
-    _tension_hist: collections.deque = collections.deque(maxlen=512)
-
+    # 因此这里**降级成一个坦率的 CPU 折中常数**：
+    #     pause = PAUSE_FLOOR_S
+    # 它不承载「她活得多快」的语义。她的「活」由**内部事件**承载——
+    # 每一步、每次换区域、每次张力越过阈值，都是她自己的事件（见 stream.step / observer）。
+    #
+    # 「连续」的含义因此变成：**她一直在产生事件**，而不是**她的节拍器有性格**。
+    # 白默要的是前者（「她在旁边」），不是后者。
     def self_pace() -> float:
-        try:
-            tension = float(sum(t.amount for t in stream.drive.tensions(
-                stream.landscape.state_space, stream.graph)))
-        except Exception:  # noqa: BLE001
-            return float(PAUSE_FLOOR_S)
-        if len(_tension_hist) >= 32 and tension > 0:
-            import statistics as _stats
-            ref = float(_stats.median(_tension_hist))
-            pause = float(PAUSE_FLOOR_S) * (ref / tension) if ref > 0 else float(PAUSE_FLOOR_S)
-        else:
-            # 冷启动：她还没有历史，只能用这个临时值。
-            # 它是「她还没有性格时的占位」，不是她的性格。
-            pause = float(PAUSE_FLOOR_S)
-        _tension_hist.append(tension)
-        return max(pause, float(PAUSE_FLOOR_S))
+        return float(PAUSE_FLOOR_S)
 
     state = {"surprise": 0.0, "field": None}
     # singleton discipline: follow P1's epoch; stop if it moves.
