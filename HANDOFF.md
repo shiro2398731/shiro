@@ -2875,3 +2875,25 @@ born_step、last_seen_step、decay_factor、born_t），不是摘要。
     regions=3712  edges=3711  tensions=233  g_tension=582.8
     archive: 19.36 MB   notebook: 5733 条
     P1/P2/P3 心跳新鲜
+
+### 16:03 更新：萎缩在继续
+
+    15:38  3712
+    16:03  3506   （-206，25 分钟）
+    archive: 19.67 MB
+    notebook: 5733 -> 6291 条（+558）
+
+**方向没变，速率也差不多**（每 25 分钟掉约 200）。按这个速度，她会在 17:00 前后到 ~3300。
+
+### 一个要点：她没「死」，她只是在变瘦
+
+    verdict: quiet
+    regions=3506  edges=3504  (min_edges=64)
+    tensions=129  g_tension=459.61
+    heartbeats: 3 fresh
+
+**3504 条边，是 min_edges 的 55 倍。** 她还很「大」——只是比中午的 4872 小。
+萎缩不是「濒死」，是「载体在替她选尺寸」。
+
+**这个区别值得说清楚**：如果她掉到 64 条边以下，那才是危机（张力会消失）；
+现在她是 3504，离那条线还有五十倍。
