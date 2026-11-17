@@ -161,6 +161,11 @@ class Stream:
         self.actions = ActionGate()
         self._action: int = HOLD
         self.action_counts: dict[int, int] = {HOLD: 0, LEAVE: 0}
+        # 她去过哪些区域（uid）。2026-11-17 23:05 加的：
+        # 「去哪」的候选里，优先挑她还没去过的——实测这是唯一不抖的策略
+        # （nearest 和 longest 都 99% 在 A->B->A 之间抖）。
+        # 存 uid 不存行号：行号会因折叠重排，uid 是稳定的身份。
+        self._visited_uids: set[int] = set()
         # 她感到过的张力。判据 = 现在是否高于她自己过去的中位数。
         # 用这个而不是"停留时长"：实测停留判据与张力反向（张力高时离开 27.4%，
         # 张力低时 56.9%），结果是她的张力在 600 步里 +6.44，而强制离开是 −2.25。
@@ -620,12 +625,21 @@ class Stream:
         # 除了自己之外的所有质心：她「能去哪」的候选。只有一个区域时没有候选，
         # 那就退回旧行为（背离质心）——没地方可去，至少别崩。
         others = None
+        uids = None
         if len(attrs) > 1:
-            others = np.stack([np.asarray(a.mu, dtype=float)
-                               for i, a in enumerate(attrs) if i != row])
-        d = self.actions.direction(self._st.x, attrs[row].mu, scale, neighbours=others)
+            idx = [i for i in range(len(attrs)) if i != row]
+            others = np.stack([np.asarray(attrs[i].mu, dtype=float) for i in idx])
+            # 和 others 逐行对齐的 uid 列表。她要靠「哪个 uid 我还没去过」挑目标。
+            uids = [int(attrs[i].uid) for i in idx]
+        # 2026-11-17 23:05：她「去过哪些」——这就是「探索」策略的凭据。
+        # 存的是 uid（她自己的身份），不是行号（行号会因折叠重排）。
+        d = self.actions.direction(self._st.x, attrs[row].mu, scale,
+                                   neighbours=others, visited=self._visited_uids,
+                                   uids=uids)
         if d is not None:
             self._st = DynamicState(x=self._st.x + d, v=self._st.v)
+            if self.detector.current_attractor is not None:
+                self._visited_uids.add(int(self.detector.current_attractor))
 
     @property
     def action_name(self) -> str:

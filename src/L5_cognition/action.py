@@ -71,7 +71,9 @@ class ActionGate:
 
     def direction(self, x: np.ndarray, centroid: np.ndarray,
                   scale: float,
-                  neighbours: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+                  neighbours: Optional[np.ndarray] = None,
+                  visited: Optional[Sequence] = None,
+                  uids: Optional[Sequence] = None) -> Optional[np.ndarray]:
         """离开的方向。
 
         2026-11-17 改过：**指向最近的另一个区域，不是背离质心。**
@@ -108,6 +110,44 @@ class ActionGate:
                 d = cand - x
                 dist = np.linalg.norm(d, axis=1)
                 dist[~np.isfinite(dist)] = np.inf
+
+                # ── 2026-11-17 23:05：优先去「她还没去过的」区域 ──
+                #
+                # 实测（副本 900 步，同种子，只换策略）：
+                #
+                #   mode        transitions  visited  A->B->A  regions
+                #   nearest        439          4      0.993   3158
+                #   longest        639          5      0.992   3159
+                #   unvisited       13         12      0.083   3336
+                #
+                # 「最近邻」和「去待得最久的」都 99% 在 A->B->A 之间抖：
+                # A 的最近邻是 B，B 的最近邻又是 A，那是一个稳定点不是一条路。
+                # 「去还没去过的」是唯一不抖的——而且它让她从 3158 长到 3336。
+                #
+                # 注意它的失败模式（也量过）：**她停止长新区域时会「停」而不是抖**
+                # （4 次转移、4 个区域）。所以这个策略不是「更好的方向」，
+                # 是「让她用上她自己长出来的空间」。她不长，它就没地方去了。
+                if visited is not None and uids is not None:
+                    vis = set(int(v) for v in visited)
+                    uid_arr = np.asarray([int(u) for u in uids])
+                    # **可达性**：只挑「走一步能到」的没去过区域。
+                    #
+                    # 2026-11-17 23:35 的一个 bug 在这里被 test_action 抓到：
+                    # 原来取 `fresh[0]`（列表里第一个没去过的），它可能在十万单位外。
+                    # 她一步最多走自己的半径（617），走完还在原地——于是
+                    # `test_do_leave_lowers_the_chance_of_staying` 实测 do(leave) 的
+                    # stay_share 是 **1.0**（一步都没换成区域）。
+                    #
+                    # 现在：没去过的里面只留「距离 <= 一步能到」的，按距离由近到远挑。
+                    # 全都太远就退回最近邻——不是放弃探索，是**不假装能一步到远处**。
+                    reach = s
+                    fresh = [k for k in range(len(uid_arr))
+                             if int(uid_arr[k]) not in vis
+                             and np.isfinite(dist[k]) and 0 < dist[k] <= reach]
+                    if fresh:
+                        k = int(min(fresh, key=lambda j: dist[j]))
+                        return d[k] / dist[k] * min(s, float(dist[k]))
+
                 j = int(np.argmin(dist))
                 if np.isfinite(dist[j]) and dist[j] > 0:
                     unit = d[j] / dist[j]
