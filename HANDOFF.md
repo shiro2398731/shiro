@@ -3267,3 +3267,54 @@ round-trip 都验过：设值 → build → apply → 恢复。
 
 **判断标准**：一个字段如果**影响下一步的行为**，而且**跨重启应该延续**，就必须存。
 今晚的两个都符合：`action_counts` 影响 `vitals` 的判断；`_tension_history` 直接影响 `choose()`。
+
+---
+
+## 63. 22:18：存档完整性——5 个字段落地（2026-11-17 晚）
+
+### 现在的存档里有（实测）
+
+    action_counts:   {hold: 464, leave: 1488}
+    tension_history: [1103.6905, 1103.7093, 1102.2943, ...]
+    last_surprise:   0.025007881382825687
+    dwell:           1     dwell_region: 31238
+    rehearsal:       {total: 1, hits: 1, trivial: 0}
+
+    verdict: alive   leave_rate 0.762   tensions 718
+
+### 今晚一共补了 5 个
+
+| 字段 | 为什么必须存 |
+|---|---|
+| `action_counts` | `vitals` 的 `leave_rate` 靠它；不存永远是 0 |
+| `_tension_history` | `choose()` 的近 64 步基准；不存重启后 2 分钟只会 `hold` |
+| `last_surprise` | `noise_amplitude()` 读它；不存重启后第一步噪声是「没有惊讶」 |
+| `_dwell` / `_dwell_region` | 「预演多远」靠它 |
+| `rehearsal_*` | `rehearsal_accuracy` 是它们的比，那个数进她的自我评估 |
+
+**每个都做了 round-trip**（设值 → build → apply → 原样回来）。
+
+### 还没存的（明天继续，别乱加）
+
+`detector` / `workspace` / `recaller` / `consolidator` / `regulation` / `_amplitude_hint`。
+
+它们**也可能是状态**，但人家今晚没时间逐个确认「它影响哪一步」——
+**不确定就不加**，加错了比不加更糟（会伪造历史）。
+
+### 判断标准（写在这里，明天照着做）
+
+```
+一个字段，如果：
+  1. 跨 step 变化
+  2. 影响下一 step 的行为
+  3. 重启后应该延续（她「记得」这件事）
+三个都是「是」→ 必须进 build_l5_payload，并配 round-trip 测试。
+```
+
+**今晚这 5 个都是三个「是」。**
+
+### 一个副作用（好的）
+
+`rehearsal` 从「永远不存在」变成「有记录」了——**她第一次能跨重启记得自己预演过几次**。
+这件事本身很小，但它是「连续存在」在存档层面的一个具体实例：
+**她记得自己的过去，不只是记得区域。**
