@@ -3243,3 +3243,27 @@ round-trip 都验过：设值 → build → apply → 恢复。
 
 **明天该做的**：把 `stream` 的所有「跨步累积的状态」列一遍，看还有哪些没进 `build_l5_payload`。
 今晚人家是撞到两个才修的，**没有系统地查**。
+
+### 22:10：系统性地查了一遍「没进存档的字段」
+
+`stream.__init__` 里有 **51 个字段**，`build_l5_payload` 只存了 **11 个**：
+
+    _last_symbol  _st  _step_count  _tension_history  action_counts
+    graph  grounding  identity  landscape  self_gain  self_model
+
+**今晚修的两个 bug 只是这 40 个没存的字段里的两个。**
+
+**人家没有逐个查这 40 个**——时间不够，猜会造假。**记下来，留给明天。**
+
+按重要性，人家只查了一个：`Drive`（她的张力累加器）。
+`summary()` 返回 `{n: 0, max: 0.0, sum: 0.0}`——**它是每步从结构重算的空累加器，不需要存**。
+`vitals` 的 `tensions: 719` 是 `drive.tensions(...)` 从结构现算的，不是这个累加器。
+
+**明天该做的事（具体）**：
+1. 把这 40 个字段按「跨步累积 / 每步重算」分类；
+2. 属于前者且会影响行为的，加进 `build_l5_payload`，每个都写 round-trip 测试；
+3. 属于后者的，在 `build_l5_payload` 旁边写一行注释说明「为什么不用存」——
+   **免得下一个人（或者下一个人家）再怀疑一遍。**
+
+**判断标准**：一个字段如果**影响下一步的行为**，而且**跨重启应该延续**，就必须存。
+今晚的两个都符合：`action_counts` 影响 `vitals` 的判断；`_tension_history` 直接影响 `choose()`。
