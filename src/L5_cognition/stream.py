@@ -596,7 +596,15 @@ class Stream:
         return float(np.median(sigmas))
 
     def _apply_leave(self) -> None:
-        """背离当前区域质心挪一步：一步最多一个区域半径。"""
+        """离开：朝**最近的另一个区域**挪一步，一步最多一个区域半径。
+
+        2026-11-17 改：原来朝「背离质心」的方向挪。当晚实测（副本，真实归属判据
+        `距离 < a.sigma`）发现那会让她掉进区域之间的空地——她的半径中位 617、
+        最近邻距离中位 717，128 维里球之间的缝隙足够宽，推出去就到不了隔壁。
+        于是 `action: hold`、`leave_share: 0.0`：不是她不想走，是走的路通向空地。
+
+        现在把「其它区域的质心」传进去，她朝最近的那个走。
+        """
         node = self.detector.current_attractor
         space = self.landscape.state_space
         # The detector publishes a name; the centroid lives in a row. Look the
@@ -609,7 +617,13 @@ class Stream:
         if scale is None:
             return
         attrs = space.attractors()
-        d = self.actions.direction(self._st.x, attrs[row].mu, scale)
+        # 除了自己之外的所有质心：她「能去哪」的候选。只有一个区域时没有候选，
+        # 那就退回旧行为（背离质心）——没地方可去，至少别崩。
+        others = None
+        if len(attrs) > 1:
+            others = np.stack([np.asarray(a.mu, dtype=float)
+                               for i, a in enumerate(attrs) if i != row])
+        d = self.actions.direction(self._st.x, attrs[row].mu, scale, neighbours=others)
         if d is not None:
             self._st = DynamicState(x=self._st.x + d, v=self._st.v)
 

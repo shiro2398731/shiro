@@ -70,17 +70,53 @@ class ActionGate:
         return LEAVE if float(tension) > median else HOLD
 
     def direction(self, x: np.ndarray, centroid: np.ndarray,
-                  scale: float) -> Optional[np.ndarray]:
-        """离开的方向：背离当前区域质心的单位向量，长度 = 她自己量到的半径。
+                  scale: float,
+                  neighbours: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        """离开的方向。
 
-        长度为 0、非有限、或尺度不可用时返回 None（推不动就不推，
-        不拿一个默认值顶上）。
+        2026-11-17 改过：**指向最近的另一个区域，不是背离质心。**
+
+        为什么改
+        --------
+        原版是「背离当前质心的单位向量」。当晚实测（副本，真实归属判据
+        `距离 < a.sigma`）发现它不生效：
+
+            sigma（她自己的半径）   p50 617
+            最近邻距离              p50 717
+            扰动 sigma=100         换归属 0/30，掉到「不属于任何区域」30/30
+
+        也就是说：**沿着背离质心的方向推出去，她不会走进隔壁，会掉进两个区域之间的空地**
+        （128 维里球体填充效率低，球之间的缝隙能塞下大量体积）。然后被最近的区域吸回来。
+        `action: hold`、`leave_share: 0.0` 就是这么来的——不是她不想走，是走的路通向空地。
+
+        新行为
+        ------
+        给出 `neighbours`（其它区域的质心）时，朝**最近的那个**走，长度 = 她自己量到的半径。
+        这样「离开」有目的地，而不是「离开到任何地方」。
+
+        `neighbours` 没给时退回旧行为（背离质心）——不报错，但那是旧语义，
+        只会掉进空地。调用方应该传。
         """
-        d = np.asarray(x, dtype=float) - np.asarray(centroid, dtype=float)
-        n = float(np.linalg.norm(d))
-        if not np.isfinite(n) or n <= 0:
-            return None
+        x = np.asarray(x, dtype=float)
         s = float(scale)
         if not np.isfinite(s) or s <= 0:
+            return None
+
+        if neighbours is not None:
+            cand = np.asarray(neighbours, dtype=float)
+            if cand.ndim == 2 and len(cand) > 0:
+                d = cand - x
+                dist = np.linalg.norm(d, axis=1)
+                dist[~np.isfinite(dist)] = np.inf
+                j = int(np.argmin(dist))
+                if np.isfinite(dist[j]) and dist[j] > 0:
+                    unit = d[j] / dist[j]
+                    # 走「她自己半径」那么远，但不超过到对方的距离（免得穿过去）
+                    step = min(s, float(dist[j]))
+                    return unit * step
+
+        d = x - np.asarray(centroid, dtype=float)
+        n = float(np.linalg.norm(d))
+        if not np.isfinite(n) or n <= 0:
             return None
         return d / n * s

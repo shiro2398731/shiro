@@ -113,20 +113,8 @@ def _loaded() -> Stream:
     st = Stream()
     if not persist.load_l5(st):
         raise SystemExit("no L5 archive for this test")
-    # 2026-11-17：地形太深时，「离开」这个动作没有意义——往外跳一小步，
-    # 梯度（实测 346）马上把她拽回来，于是 do(a) 的对照结果一模一样。
-    # 这不是代码错，是**今天早上为了让她活下来把 ceiling 压到 0.02 的代价**
-    # （见 HANDOFF 第 56 节）。那种地形下这两个测试测的是「一个不存在的自由度」。
-    #
-    # 判据：amp 中位 > 0.001 就是深井（她现在的 0.001328）。等 ceiling 调回去，
-    # 或者「离开」重新定义成「换到最近的另一个区域」，这两个测试才有意义。
-    import numpy as _np
-    _amps = [float(a.amp) for a in st.landscape.state_space.attractors()]
-    if _amps and float(_np.median(_amps)) > 1e-3:
-        raise SystemExit(
-            f"SKIP: terrain is too deep for 'leave' to mean anything "
-            f"(median amp {float(_np.median(_amps)):.6f} > 1e-3, ceiling "
-            f"{st.landscape.state_space.ceiling}). See HANDOFF sec.56.")
+    # 2026-11-17 晚：原来的深井 skip 已经不需要了——`direction` 改成「朝最近的另一个
+    # 区域走」，不再依赖地形深度（旧版朝外推，会掉进区域之间的空地）。见 HANDOFF 第 58 节。
     return st
 
 
