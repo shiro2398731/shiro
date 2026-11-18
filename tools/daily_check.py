@@ -131,9 +131,9 @@ def run() -> dict:
         "biggest_mb": round(sizes[max(sizes, key=sizes.get)], 2) if sizes else 0.0,
         "max_component": round(_max_component(st), 1),
         "max_component_ok": _max_component(st) < 5e5,
-        "action_driven_15min": int(recent["action_driven"]),
+        "action_driven_15min": int(recent.get("leaves", 0)),
         "transitions_15min": int(recent["transitions"]),
-        "motion_ok": int(recent["action_driven"]) > 0,
+        "motion_ok": int(recent.get("leaves", 0)) > 0,
         "regression": reg,
         "regression_ok": reg.get("ok"),
     }
@@ -155,7 +155,7 @@ def show(r: dict) -> None:
           f"   （健康 <18）最大键 {r['biggest_key']} {r['biggest_mb']:.2f} MB")
     print(f"  {mark(r['max_component_ok'])}3 max 分量              {r['max_component']:,.0f}"
           f"   （健康 <5e5；存档上限 1e6）")
-    print(f"  {mark(r['motion_ok'])}4 最近 15 分钟她自己走的  {r['action_driven_15min']}"
+    print(f"  {mark(r['motion_ok'])}4 最近 15 分钟 leave      {r['action_driven_15min']}"
           f" / 转移 {r['transitions_15min']}   （健康 >0）")
     reg = r.get("regression") or {}
     if reg.get("ok") is None:
