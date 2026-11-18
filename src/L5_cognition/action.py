@@ -153,9 +153,14 @@ class ActionGate:
                         reach = float(np.median(_ok))
                     else:
                         reach = s
+                    # 2026-11-18 下午：fresh 也要排除「几乎重合」的候选（dist < s）。
+                    # 上面 10:00 那条只在 fallback 分支加了 dist >= s，fresh 分支漏了。
+                    # 实测（补丁版 200 步）：69.5% 的「离开」位移 < 1 —— 因为她挑到的是
+                    # 一个 0.01–0.1 远的重复区域，走 min(s, dist) 等于原地蹭。
+                    # 「离开」的本意是至少挪开一个半径，所以这里也要求 dist >= s。
                     fresh = [k for k in range(len(place_keys))
                              if place_keys[k] not in vis
-                             and np.isfinite(dist[k]) and 0 < dist[k] <= reach]
+                             and np.isfinite(dist[k]) and s <= dist[k] <= reach]
                     if fresh:
                         k = int(min(fresh, key=lambda j: dist[j]))
                         return d[k] / dist[k] * min(s, float(dist[k]))

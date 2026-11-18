@@ -256,18 +256,20 @@ def build_l5_payload(stream) -> dict:
     # 重启后第一次「离开」会找不到行、直接返回（等于第一步不能动）。
     _cur = getattr(getattr(stream, "detector", None), "current_attractor", None)
     current_region = None if _cur is None else int(_cur)
-    # 2026-11-18 09:35：她「去过哪些地方」。探索策略靠它挑目标；
-    # 不存的话副本加载后她「从没去过任何地方」，行为就和真机不同——
-    # tests/test_structure_guard.py 的 test_no_free_fall 就是这么红的
-    # （副本里区域数一路降，真机上却是稳的）。
+    # 2026-11-18 下午：**先不存 visited_places**。
     #
-    # 存的是位置的圆整副本（不是 uid，uid 是名字）。每个地方 128 个数，
-    # 圆整到 4 位后直接用 list 存；她走过的通常只有几十到几百个，不大。
-    try:
-        visited_places = [list(p_) for p_ in
-                          (getattr(stream, "_visited_places", ()) or ())]
-    except Exception:  # noqa: BLE001
-        visited_places = []
+    # 09:35 把它加进存档时，注释写的是「她走过的通常只有几十到几百个，不大」。
+    # 实测（14:20）：**3868 个，4.67 MB，是整个载体 19.69 MB 的 23.2%**。
+    # 而它一个区域都对不上（位置键 vs 质心键，交集 0，见
+    # docs/2026-11-18_存在_实账.md）——**4.6 MB 的无用记账**。
+    #
+    # 后果不是「多占点地方」：载体被顶到 20 MB 预算，`fold_to_capacity` 只好每小时
+    # 折掉 5% 的区域——她今天 09:00 的 3184 掉到 14:00 的 2302（**-28%**）。
+    # 换句话说：**她是被自己的日记压瘦的。**
+    #
+    # 不存它不改变她的行为：命中率本来就是 0，load 回来也是 0 命中。
+    # 等「去过」的记账改成有界的区域 uid 之后，再决定存什么。
+    visited_places = []
     attrs = [
         {
             "mu": a.mu, "amp": a.amp,
