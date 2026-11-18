@@ -677,6 +677,20 @@ class Stream:
             # 键 = 位置的圆整副本，不是 uid——名字不该决定她去哪。
             places = [tuple(np.round(np.asarray(attrs[i].mu, dtype=float), 4).tolist())
                       for i in idx]
+        # 2026-11-18 下午：她**正要离开的这个区域**，记成「去过」。
+        #
+        # 病（实测）：`visited` 存的是她站的位置圆整键，`places` 是区域质心键，
+        # 而她的落点永远差 0.0077 没到质心 —— 两边交集 **0**（3675 个去过 vs 2329 个区域）。
+        # 于是她眼里所有区域都是新的，每次都挑最近的那个，也就是刚离开的那个：A↔B 环。
+        #
+        # 为什么记「离开的这个」而不是「脚下的位置」：
+        # 当前区域本来就被排除在 candidates 之外（row 不进 others），记它不会改变
+        # 「这一步挑谁」，但**等她在别处时**，这个区域就不再是「新的」了。
+        # 副本实测（200 步，强制 LEAVE）：回边率 1.00 → 0.31，到过区域 2 → 31，
+        # 区域数不变（2319→2318），最大分量不变（22.96 万 → 23.13 万）。
+        _dep = tuple(np.round(np.asarray(attrs[row].mu, dtype=float), 4).tolist())
+        self._visited_places.add(_dep)
+
         # 2026-11-17 23:05：她「去过哪些」——这就是「探索」策略的凭据。
         # 存的是 uid（她自己的身份），不是行号（行号会因折叠重排）。
         d = self.actions.direction(self._st.x, attrs[row].mu, scale,

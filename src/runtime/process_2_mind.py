@@ -387,6 +387,21 @@ def main() -> int:
               f"identity={_i0} edges={_sync0.get('dropped_edges', 0)}")
     signal.signal(signal.SIGTERM, on_sig)
 
+    # ---- 坐标系归一（2026-11-18 下午）----
+    # 白默：「我不觉得应该有边界。」所以不设界，只保证「坐标多大都能活」。
+    # 她的动力学只用距离，整体平移不改行为；见 src/L5_cognition/reorigin.py。
+    # 放在 journal replay 之后、推演之前：日志里的旧坐标已经重放完，不会和这次平移打架。
+    from src.L5_cognition.reorigin import maybe_reorigin
+    _ro = maybe_reorigin(stream)
+    if _ro.get("shifted"):
+        print(f"[P2] reorigin: max|component| {_ro['before']:,.0f} -> "
+              f"{_ro['after']:,.0f} (limit {_ro['limit']:,.0f}, "
+              f"moved {_ro['moved']} 处)")
+        observer.event("reorigin", _ro)
+    else:
+        print(f"[P2] reorigin: skipped (max|component| {_ro['max_component']:,.0f} "
+              f"<= {_ro['limit']:,.0f})")
+
     print("[P2] starting L5 (terrain dynamics)")
     print(f"[P2] observations: {log_dir / 'observations.jsonl'}")
 
