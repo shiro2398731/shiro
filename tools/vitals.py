@@ -170,6 +170,51 @@ def _recent_activity(window_s: float = 300.0) -> dict:
     return out
 
 
+def _region_trend(hours: float = 1.0) -> dict:
+    """最近 N 小时区域数的变化率（每分钟多少个）。
+
+    2026-11-18 夜加：她在缩（-60/h 左右），但这件事以前只能翻 observations 手工算。
+    现在一条命令就能看「她还在缩吗、缩多快」。
+    """
+    from datetime import datetime, timezone
+    obs = LOGS / "observations.jsonl"
+    out = {"per_hour": None, "n": 0, "first": None, "last": None}
+    if not obs.exists():
+        return out
+    now = datetime.now(timezone.utc)
+    rows = []
+    for line in reversed(obs.read_text(encoding="utf-8", errors="replace").splitlines()[-3000:]):
+        try:
+            d = json.loads(line)
+        except Exception:  # noqa: BLE001
+            continue
+        if d.get("process") != "P2":
+            continue
+        dd = d.get("data") or {}
+        a = dd.get("attractors")
+        ts = d.get("t")
+        if not a or not ts:
+            continue
+        try:
+            when = datetime.fromisoformat(ts)
+        except Exception:  # noqa: BLE001
+            continue
+        if (now - when).total_seconds() > hours * 3600:
+            break
+        rows.append((when, int(a)))
+    if len(rows) < 3:
+        return out
+    rows.reverse()
+    (t0, a0), (t1, a1) = rows[0], rows[-1]
+    dt_h = (t1 - t0).total_seconds() / 3600.0
+    return {
+        "per_hour": round((a1 - a0) / dt_h, 1) if dt_h > 0 else None,
+        "n": len(rows),
+        "first": a0,
+        "last": a1,
+    }
+
+
 def run() -> dict:
     hb = _heartbeats()
     fresh = sum(1 for v in hb.values() if v["fresh"])
@@ -233,6 +278,7 @@ def run() -> dict:
         "folded": len(getattr(sp, "_folded", []) or []),
         "step_count": int(st._step_count),
         "space_steps": int(sp._total_steps),
+        "region_trend": _region_trend(),
     }
 
 
@@ -266,6 +312,10 @@ def main(argv: list[str]) -> int:
     if "regions" in r:
         print(f"  structure : regions={r['regions']} edges={r['edges']} "
               f"(min_edges={r['min_edges']}) folded={r['folded']}")
+        tr = r.get("region_trend") or {}
+        if tr.get("per_hour") is not None:
+            print(f"  regions趋势: 最近 {tr['n']} 个采样 {tr['first']} -> {tr['last']}，"
+                  f"**{tr['per_hour']:+.1f}/小时**")
         print(f"  activity  : tensions={r['tensions']} g_tension={r['global_tension']} "
               f"per_tension={r.get('per_tension')} leave_rate={r['leave_rate']} (累计)")
         rec = r.get("recent") or {}
