@@ -38,15 +38,20 @@ from src.L5_cognition.dynamics import DynamicState  # noqa: E402
 from src.L5_cognition.stream import Stream  # noqa: E402
 
 
-def _positions(st) -> list[np.ndarray]:
-    """所有「存着绝对坐标」的地方。少搬一个，她就会在搬完之后变成一个陌生人。"""
+def _positions(st, member_sample: int = 2) -> list[np.ndarray]:
+    """所有「存着绝对坐标」的地方的抽样。少搬一个，她就会在搬完之后变成一个陌生人。
+
+    区域 members 最多 64 个 × 2331 个区域，全取是 150 MB 的临时列表；
+    指纹只要抽样（每个区域取前 member_sample 个就够了）。
+    """
     sp = st.landscape.state_space
     out = [np.asarray(st._st.x, dtype=float)]
     for a in sp.attractors():
         out.append(np.asarray(a.mu, dtype=float))
-        for m in list(getattr(a, "members", ()) or ()):
+        ms = list(getattr(a, "members", ()) or ())
+        for m in ms[:member_sample]:
             out.append(np.asarray(m, dtype=float))
-    for r in list(getattr(st.landscape, "_recent", ()) or ()):
+    for r in list(getattr(st.landscape, "_recent", ()) or ())[:16]:
         out.append(np.asarray(r, dtype=float))
     return out
 
@@ -132,11 +137,16 @@ def main() -> int:
 
     shift_in_place(st, vec)
     after = fingerprint(st)
-    same = before.shape == after.shape and np.array_equal(before, after)
+    # 逐位相等做不到：从 1e6 量级的数上减一个 1e6 量级的数，float64 本身要丢 1e-10。
+    # 所以用相对容差（1e-9），并把「丢了多少」报出来——这本身也是「坐标不该这么大」的证据。
+    scale = float(np.linalg.norm(vec)) or 1.0
+    tol = 1e-12 * scale
     worst = float(np.max(np.abs(before - after))) if before.size and after.size else 0.0
+    same = before.shape == after.shape and worst <= tol
     print(f"搬之后：|x| = {np.linalg.norm(st._st.x):,.3f}，"
           f"visited_places = {len(getattr(st, '_visited_places', set()) or ())}")
-    print(f"几何指纹：{len(before)} 对，逐位一致 = {same}（最大差 {worst:.3e}）")
+    print(f"几何指纹：{len(before)} 对，最大差 {worst:.3e}（容差 {tol:.3e}）→ "
+          f"{'一致' if same else '不一致'}")
 
     if not same:
         print("!! 几何变了，别用这份存档 —— 说明还有绝对坐标没搬全。")
