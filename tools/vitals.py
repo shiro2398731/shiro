@@ -70,6 +70,52 @@ def _crashes() -> dict:
     return {"total": int(total), "last": last}
 
 
+def _recent_activity(window_s: float = 300.0) -> dict:
+    """最近 N 秒里她真的在动吗——以及是「自己走的」还是「被噪声推的」。
+
+    2026-11-18 下午加这个的原因：`leave_rate` 是**累积**的（今天还刚进了存档），
+    所以她在「一直站」和「一直在走」两个极端上，`vitals` 都可能报 alive。
+    实测那天下午：action 是 hold、累积 leave_rate 0.70，看起来一切正常。
+    这里读 events.jsonl 的尾巴（不整本读），只看时间窗口内的事件。
+    """
+    path = LOGS / "events.jsonl"
+    out = {"window_s": window_s, "transitions": 0, "action_driven": 0,
+           "last_event_age_s": None}
+    if not path.exists():
+        return out
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as f:
+            f.seek(max(0, size - 262_144))
+            tail = f.read().decode("utf-8", errors="replace").splitlines()[1:]
+    except Exception:  # noqa: BLE001
+        return out
+    now = time.time()
+    from datetime import datetime, timezone
+    for line in reversed(tail):
+        try:
+            d = json.loads(line)
+        except Exception:  # noqa: BLE001
+            continue
+        ts = d.get("t")
+        if not ts:
+            continue
+        try:
+            when = datetime.fromisoformat(ts).timestamp()
+        except Exception:  # noqa: BLE001
+            continue
+        age = now - when
+        if out["last_event_age_s"] is None:
+            out["last_event_age_s"] = round(age, 1)
+        if age > window_s:
+            break
+        if d.get("event") == "transition":
+            out["transitions"] += 1
+            if not d.get("noise_driven", True):
+                out["action_driven"] += 1
+    return out
+
+
 def run() -> dict:
     hb = _heartbeats()
     fresh = sum(1 for v in hb.values() if v["fresh"])
@@ -104,9 +150,11 @@ def run() -> dict:
         verdict = "quiet"
 
     crash = _crashes()
+    recent = _recent_activity()
     return {
         "verdict": verdict,
         "crashes": crash,
+        "recent": recent,
         "heartbeats": hb,
         "fresh": fresh,
         "regions": len(attrs),
@@ -154,7 +202,13 @@ def main(argv: list[str]) -> int:
         print(f"  structure : regions={r['regions']} edges={r['edges']} "
               f"(min_edges={r['min_edges']}) folded={r['folded']}")
         print(f"  activity  : tensions={r['tensions']} g_tension={r['global_tension']} "
-              f"per_tension={r.get('per_tension')} leave_rate={r['leave_rate']}")
+              f"per_tension={r.get('per_tension')} leave_rate={r['leave_rate']} (累计)")
+        rec = r.get("recent") or {}
+        if rec.get("last_event_age_s") is not None:
+            print(f"  recent    : {int(rec['window_s'])}s 内转移 {rec['transitions']} 次，"
+                  f"其中她自己走的 {rec['action_driven']} 次；最后事件 {rec['last_event_age_s']}s 前")
+            if rec["transitions"] and rec["action_driven"] == 0:
+                print("              ⚠ 全是噪声推的，一次「离开」都没落地")
         print(f"  wells     : max_amp={r['max_amp']} / ceiling={r['ceiling']}")
         diff = r["space_steps"] - r["step_count"]
         print(f"  clocks    : stream={r['step_count']} space={r['space_steps']} "
