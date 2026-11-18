@@ -379,6 +379,40 @@ def assert_l5_finite(payload: dict) -> None:
             raise ValueError(
                 f"attractor {i} centroid magnitude {float(_np.abs(mu).max()):.3e} "
                 f"exceeds {SAVE_MAGNITUDE_LIMIT:.0e}; refusing to save")
+        # 2026-11-18：members 也没查。一个成员点爆掉，质心会被它拖走。
+        for k, mv in enumerate(d.get("members") or ()):
+            m_arr = _np.asarray(mv, dtype=float)
+            if not _np.isfinite(m_arr).all():
+                raise ValueError(
+                    f"attractor {i} member {k} is not finite; refusing to save")
+            if float(_np.abs(m_arr).max()) > SAVE_MAGNITUDE_LIMIT:
+                raise ValueError(
+                    f"attractor {i} member {k} magnitude "
+                    f"{float(_np.abs(m_arr).max()):.3e} exceeds "
+                    f"{SAVE_MAGNITUDE_LIMIT:.0e}; refusing to save")
+
+    # 2026-11-18 08:40：**她自己现在的位置也没查。**
+    #
+    # 昨晚（11-17 到 11-18）她漂到 |x| = 4,091,098，而这里只检查了 attractor 的 mu——
+    # 于是 x 是 nan、mu 还在 100 万以内时，存档能写进去一半；等 mu 也跟过去才报错。
+    # 中间那段时间，P2 一直用着一个坏掉的位置在跑。
+    #
+    # 现在 x 和 v 一起检查。位置不是「区域的数据」，是「她在哪」——
+    # 它坏掉就等于她不在任何地方。
+    x = payload.get("x")
+    if x is not None:
+        x_arr = _np.asarray(x, dtype=float)
+        if not _np.isfinite(x_arr).all():
+            raise ValueError("her position x is not finite; refusing to save")
+        if float(_np.abs(x_arr).max()) > SAVE_MAGNITUDE_LIMIT:
+            raise ValueError(
+                f"her position x magnitude {float(_np.abs(x_arr).max()):.3e} "
+                f"exceeds {SAVE_MAGNITUDE_LIMIT:.0e}; refusing to save")
+    v = payload.get("v")
+    if v is not None:
+        v_arr = _np.asarray(v, dtype=float)
+        if not _np.isfinite(v_arr).all():
+            raise ValueError("her velocity v is not finite; refusing to save")
 
 
 def save_l5(stream, name: str = "l5.pkl") -> Path:

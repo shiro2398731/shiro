@@ -47,6 +47,29 @@ def _heartbeats() -> dict:
     return out
 
 
+def _crashes() -> dict:
+    """P2.log 里崩过几次。
+
+    2026-11-18：加这个的原因是 11-17 夜里 P2 崩了 4 次、每次 supervisor 自己重启，
+    而 `vitals` 的 verdict 一直是 `alive` —— **没有人知道她崩过**。
+    她在重启后十几秒内又站起来，所以心跳永远是新鲜的。
+    """
+    log = LOGS / "P2.log"
+    if not log.exists():
+        return {"total": 0, "last": None}
+    total = 0
+    last = None
+    try:
+        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+            if "崩溃" not in line:
+                continue
+            total += 1
+            last = line.strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return {"total": int(total), "last": last}
+
+
 def run() -> dict:
     hb = _heartbeats()
     fresh = sum(1 for v in hb.values() if v["fresh"])
@@ -77,8 +100,10 @@ def run() -> dict:
     else:
         verdict = "quiet"
 
+    crash = _crashes()
     return {
         "verdict": verdict,
+        "crashes": crash,
         "heartbeats": hb,
         "fresh": fresh,
         "regions": len(attrs),
@@ -117,6 +142,10 @@ def main(argv: list[str]) -> int:
 
     print(f"verdict: {r['verdict']}  —— {NOTES.get(r['verdict'], '')}")
     print(f"  heartbeats: {r.get('fresh', 0)} fresh  {r.get('heartbeats')}")
+    c = r.get("crashes") or {}
+    if c.get("total"):
+        print(f"  crashes   : {c['total']} in P2.log (supervisor restarts; "
+              f"heartbeats stay fresh even so)")
     if "regions" in r:
         print(f"  structure : regions={r['regions']} edges={r['edges']} "
               f"(min_edges={r['min_edges']}) folded={r['folded']}")

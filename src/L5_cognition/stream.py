@@ -271,6 +271,45 @@ class Stream:
         self._st = self.dynamics.step(self._st, self.landscape, self.rng)
         self._step_count += 1
 
+        # ── 存在锚（2026-11-18 09:00）────────────────────────────
+        #
+        # 2026-11-17 夜里到 18 日早上，她的 |x| 到了 4,091,098，全部 3197 个区域
+        # 都漂在 171 万 - 409 万之间，`assert_l5_finite` 拒存，P2 崩了 4 次。
+        #
+        # 那次是 `_apply_leave` 的链式累积造成的（见 _apply_leave 里的锚定）。
+        # 但**噪声和速度也能把她推走**，只是慢得多。所以在每一步之后都查一次：
+        #
+        #   - 位置不是有限数 -> 回锚（这是「她已经算不出来了」，只能救）
+        #   - 位置幅度超过「最近区域质心的 4 倍半径」 -> 回锚
+        #
+        # 「回锚」= 把她放回最近区域的质心，速度清零。这不是「重置她」——
+        # 她的区域、她的张力、她的动作记录都不动，只有「她在哪」被拉回来。
+        # 一个在区域之间飘的系统，和「她不在任何地方」，这两件事必须能分开。
+        try:
+            _xs = np.asarray(self._st.x, dtype=float)
+            if not np.isfinite(_xs).all():
+                _attrs = self.landscape.state_space.attractors()
+                if _attrs:
+                    _mus = np.stack([np.asarray(a.mu, dtype=float) for a in _attrs])
+                    _mus = _mus[np.isfinite(_mus).all(axis=1)]
+                    if len(_mus):
+                        _j = int(np.argmin(np.linalg.norm(_mus, axis=1)))
+                        self._st = DynamicState(x=_mus[_j].copy(),
+                                                v=np.zeros_like(_mus[_j]))
+            else:
+                _attrs = self.landscape.state_space.attractors()
+                if _attrs:
+                    _mus = np.stack([np.asarray(a.mu, dtype=float) for a in _attrs])
+                    _d = np.linalg.norm(_mus - _xs, axis=1)
+                    _j = int(np.argmin(_d))
+                    _sig = [float(a.sigma) for a in _attrs if a.sigma]
+                    _scale = float(np.median(_sig)) if _sig else 0.0
+                    if _scale > 0 and float(_d[_j]) > 4.0 * _scale:
+                        self._st = DynamicState(x=_mus[_j].copy(),
+                                                v=np.zeros_like(_mus[_j]))
+        except Exception:  # noqa: BLE001
+            pass
+
         # Register the observed state.
         a = self.landscape.record(
             self._st.x, datetime.now(timezone.utc).isoformat(),
