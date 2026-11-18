@@ -5187,7 +5187,7 @@ corr(regions, per_tension) = -0.992      corr(regions, tension_sum) = -0.963
 | **0** | **载体止血**：不存 `visited_places` + `fresh >= s` | 分支上，验完。**最急，可以单独合** |
 | 1 | 「去过」记「正要离开的这个区域」 | 分支上，验完 |
 | 2 | `reorigin` 接进 boot + 1e6 换相对判据 | boot 段已在分支；上限没换 |
-| 3 | 崩溃账本（`vitals` 计数已修：95 → 153） | 账本没建 |
+| 3 | 崩溃账本（`vitals` 计数已修：95 → 153） | **建好了**：`tools/crash_ledger.py`（按 Traceback 段分类，126+27=153；段法 152 差 1 有解释）+ 2 例测试 |
 | 4 | 宿主依赖（端口/进程/终端/CWD） | 清单在 docs/2026-11-18_宿主依赖清单.md；**CWD 那条已在分支上去掉**（STATE_DIR 绝对路径） |
 
 ### 今天新增
