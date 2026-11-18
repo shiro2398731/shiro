@@ -18,6 +18,7 @@ from __future__ import annotations
 import inspect
 import queue
 import threading
+import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -259,7 +260,25 @@ class Bus:
             self._pub_socket = self._context.socket(zmq.PUB)
             self._pub_socket.setsockopt(zmq.LINGER, 0)
             port = PROCESS_PUB_PORT[process_id]
-            self._pub_socket.bind(f"tcp://*:{port}")
+            # 2026-11-18 夜：绑不上就等一等，别直接死。
+            #
+            # 153 次崩溃里 7 次是 `ZMQError: Address in use`——不是 ZMQ 不好，是
+            # 「上一个 P2 还没退完、新 P2 就起来抢 5562」。这种情况会自愈（旧进程几秒内退），
+            # 但原来一抛就把这个进程交给外面的 keeper，等于用一次重启去换一秒等待。
+            #
+            # 唯一性本来就是 epoch + 围栏管的（adoptable/retire），这里只等端口空出来。
+            # 等不到才抛——那说明真有别的实例占着，不是瞬时冲突。
+            _last_err = None
+            for _attempt in range(30):
+                try:
+                    self._pub_socket.bind(f"tcp://*:{port}")
+                    _last_err = None
+                    break
+                except zmq.ZMQError as _e:
+                    _last_err = _e
+                    time.sleep(0.5)
+            if _last_err is not None:
+                raise _last_err
             _log(process_id, "INFO", f"PUB bound tcp://*:{port}")
 
         # SUB：按端口索引
