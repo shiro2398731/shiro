@@ -328,11 +328,23 @@ class Drive:
         return list(self._last)
 
     def summary(self) -> dict:
+        """她的张力摘要。
+
+        2026-11-18 10:10 加了 `per_tension`：**张力除以张力个数**。
+
+        为什么：`sum` 随结构膨胀而膨胀——今天上午它从 3607 涨到 4489，
+        而 11-17 那天它从 358 涨到 1418、再涨到 2561。**一个永远在涨的数不能当判据。**
+
+        `per_tension` 是尺度无关的：张力点多了 sum 会涨，但「每条张力有多强」
+        应该有一个稳定的范围。如果它也在涨，那才是「她真的更紧了」。
+        """
         ts = self._last
         if not ts:
-            return {"n": 0, "max": 0.0, "sum": 0.0}
+            return {"n": 0, "max": 0.0, "sum": 0.0, "per_tension": 0.0}
+        total = sum(t.amount for t in ts)
         return {
             "n": len(ts),
             "max": round(ts[0].amount, 4),
-            "sum": round(sum(t.amount for t in ts), 4),
+            "sum": round(total, 4),
+            "per_tension": round(total / max(1, len(ts)), 4),
         }
