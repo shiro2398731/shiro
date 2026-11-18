@@ -171,6 +171,9 @@ class Stream:
         # 现在存位置的圆整副本（tuple of rounded floats）。位置同名不同，名字同位置同。
         # 圆整到 6 位有效数字：够精确到区分不同区域，又不会被浮点噪声打散。
         self._visited_places: set[tuple] = set()
+        # 2026-11-18 夜：真正用来判断「去过没去过」的是 uid，不是位置键。
+        # 位置键留着只为兼容旧存档/别的工具；探索策略看这个。
+        self._visited_regions: set[int] = set()
         # 她感到过的张力。判据 = 现在是否高于她自己过去的中位数。
         # 用这个而不是"停留时长"：实测停留判据与张力反向（张力高时离开 27.4%，
         # 张力低时 56.9%），结果是她的张力在 600 步里 +6.44，而强制离开是 −2.25。
@@ -673,28 +676,24 @@ class Stream:
         if len(attrs) > 1:
             idx = [i for i in range(len(attrs)) if i != row]
             others = np.stack([np.asarray(attrs[i].mu, dtype=float) for i in idx])
-            # 和 others 逐行对齐的「地点键」。她要靠「哪个地方我还没去过」挑目标。
-            # 键 = 位置的圆整副本，不是 uid——名字不该决定她去哪。
-            places = [tuple(np.round(np.asarray(attrs[i].mu, dtype=float), 4).tolist())
-                      for i in idx]
-        # 2026-11-18 下午：她**正要离开的这个区域**，记成「去过」。
-        #
-        # 病（实测）：`visited` 存的是她站的位置圆整键，`places` 是区域质心键，
-        # 而她的落点永远差 0.0077 没到质心 —— 两边交集 **0**（3675 个去过 vs 2329 个区域）。
-        # 于是她眼里所有区域都是新的，每次都挑最近的那个，也就是刚离开的那个：A↔B 环。
-        #
-        # 为什么记「离开的这个」而不是「脚下的位置」：
-        # 当前区域本来就被排除在 candidates 之外（row 不进 others），记它不会改变
-        # 「这一步挑谁」，但**等她在别处时**，这个区域就不再是「新的」了。
-        # 副本实测（200 步，强制 LEAVE）：回边率 1.00 → 0.31，到过区域 2 → 31，
-        # 区域数不变（2319→2318），最大分量不变（22.96 万 → 23.13 万）。
-        _dep = tuple(np.round(np.asarray(attrs[row].mu, dtype=float), 4).tolist())
-        self._visited_places.add(_dep)
+            # 2026-11-18 夜（23:10）：**换成 uid 做「去过」的凭据。**
+            #
+            # 为什么不用位置键：`places` 在构造时排除了当前区域（row 不进 idx），
+            # 而「去过」标记的恰恰是当前/到达的那个区域——两边永远差一个，
+            # 实测跑 40 步加 80 条，能对上区域的 key 恒为 1。环就是这么锁死的。
+            #
+            # uid 绕开了这个问题：候选列表里没有「当前区域」的 uid，但**其它**区域的 uid
+            # 都在，所以「去过 A、现在在 B」时，A 会被正确跳过。
+            places = [int(attrs[i].uid) for i in idx]
+        else:
+            places = []
+        # 她**正要离开的这个区域**，记成「去过」（uid，不是位置键）
+        self._visited_regions.add(int(attrs[row].uid))
 
         # 2026-11-17 23:05：她「去过哪些」——这就是「探索」策略的凭据。
         # 存的是 uid（她自己的身份），不是行号（行号会因折叠重排）。
         d = self.actions.direction(self._st.x, attrs[row].mu, scale,
-                                   neighbours=others, visited=self._visited_places,
+                                   neighbours=others, visited=self._visited_regions,
                                    places=places)
         if d is not None:
             self._st = DynamicState(x=self._st.x + d, v=self._st.v)
