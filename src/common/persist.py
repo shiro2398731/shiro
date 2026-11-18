@@ -256,6 +256,18 @@ def build_l5_payload(stream) -> dict:
     # 重启后第一次「离开」会找不到行、直接返回（等于第一步不能动）。
     _cur = getattr(getattr(stream, "detector", None), "current_attractor", None)
     current_region = None if _cur is None else int(_cur)
+    # 2026-11-18 09:35：她「去过哪些地方」。探索策略靠它挑目标；
+    # 不存的话副本加载后她「从没去过任何地方」，行为就和真机不同——
+    # tests/test_structure_guard.py 的 test_no_free_fall 就是这么红的
+    # （副本里区域数一路降，真机上却是稳的）。
+    #
+    # 存的是位置的圆整副本（不是 uid，uid 是名字）。每个地方 128 个数，
+    # 圆整到 4 位后直接用 list 存；她走过的通常只有几十到几百个，不大。
+    try:
+        visited_places = [list(p_) for p_ in
+                          (getattr(stream, "_visited_places", ()) or ())]
+    except Exception:  # noqa: BLE001
+        visited_places = []
     attrs = [
         {
             "mu": a.mu, "amp": a.amp,
@@ -290,6 +302,7 @@ def build_l5_payload(stream) -> dict:
         "dwell_region": dwell_region,
         "rehearsal": rehearsal,
         "current_region": current_region,
+        "visited_places": visited_places,
         # 2026-11-16 晚：`ceiling` 从来没有进过存档。它是「单个区域的深度容量」，
         # 决定她能被吸多深（梯度 ∝ amp/sigma²）。改了它但不存，重启就回到默认 1.0，
         # 实测：改成 0.02 后重启，max_amp 立刻回 0.99、ceiling 回 1.0。
@@ -528,6 +541,13 @@ def apply_l5_payload(stream, payload: dict) -> None:
     if "dwell_region" in payload:
         _dr = payload.get("dwell_region")
         stream._dwell_region = None if _dr is None else int(_dr)
+    _vp = payload.get("visited_places")
+    if isinstance(_vp, (list, tuple)) and _vp:
+        try:
+            stream._visited_places = {tuple(float(v) for v in p_) for p_ in _vp
+                                      if isinstance(p_, (list, tuple))}
+        except Exception:  # noqa: BLE001
+            pass
     if "current_region" in payload:
         _cr = payload.get("current_region")
         if _cr is not None and hasattr(stream, "detector"):
