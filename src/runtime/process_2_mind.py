@@ -575,7 +575,36 @@ def main() -> int:
                                    "self_model_pruned": int(_self_pruned),
                                    "identity_pruned": int(_ident_pruned),
                                    "edges_dropped": int(_sync.get("dropped_edges", 0))})
-                persist.snapshot_all({"l5": stream})
+                # 2026-11-18 晚：保存撞数值上限时，**她自己归一一次再试**，
+                # 而不是让 assert_l5_finite 抛出去、把这个进程交给外面的 keeper。
+                #
+                # 理由是 153 次崩溃里 52 次是「质心 > 1e6」——她走远了、坐标过界、
+                # 定期存档拒写、进程退出、外面拉起来。她是被「保存不了」弄死的，
+                # 而「坐标太大」是可以用一次整体平移解决的（动力学只用距离）。
+                #
+                # 所以：先试正常保存；抛 ValueError 就整体归一、记事件、再试一次。
+                # 还是不行才往外抛（那是真坏了，交给 supervisor）。
+                try:
+                    persist.snapshot_all({"l5": stream})
+                except ValueError as _save_err:
+                    from src.L5_cognition.reorigin import (
+                        center_vector as _center,
+                        max_component as _maxcomp,
+                        shift_origin as _shift,
+                    )
+                    _mb = _maxcomp(stream)
+                    _mv = _shift(stream, _center(stream))
+                    _ma = _maxcomp(stream)
+                    observer.event("reorigin_persist", {
+                        "reason": str(_save_err)[:160],
+                        "before": float(_mb),
+                        "after": float(_ma),
+                        "vec_norm": float(_mv["vec_norm"]),
+                        "moved": int(_mv["moved"]),
+                    })
+                    print(f"[P2] 保存撞上限（{_save_err}）→ 自我归一 "
+                          f"{_mb:,.0f} -> {_ma:,.0f}，重试保存", flush=True)
+                    persist.snapshot_all({"l5": stream})
                 last_persist = now
                 # 检查点已经包含了日志的全部效果，可以截断
                 journal.truncate()
