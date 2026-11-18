@@ -94,12 +94,43 @@ def _recent_activity(window_s: float = 300.0) -> dict:
 
     2026-11-18 下午加这个的原因：`leave_rate` 是**累积**的（今天还刚进了存档），
     所以她在「一直站」和「一直在走」两个极端上，`vitals` 都可能报 alive。
-    实测那天下午：action 是 hold、累积 leave_rate 0.70，看起来一切正常。
-    这里读 events.jsonl 的尾巴（不整本读），只看时间窗口内的事件。
+
+    2026-11-18 17:35 修了一次：原来只从 `events.jsonl` 的 **transition** 里找
+    `noise_driven=False`，于是「她做了 LEAVE、但走一步还在同一个区域里」这种
+    最正常的情况被算成「没动」。实测：observations 里 60 个点有 32 次 leave，
+    而这里报 0。现在改成**从 observations 的 action 字段数 leave**，
+    transition 只当补充（看噪声推了多少次换区域）。
     """
     path = LOGS / "events.jsonl"
     out = {"window_s": window_s, "transitions": 0, "action_driven": 0,
-           "last_event_age_s": None}
+           "leaves": 0, "last_event_age_s": None}
+    now = time.time()
+    from datetime import datetime, timezone
+
+    # 主指标：observations 里最近 window 的 action
+    obs = LOGS / "observations.jsonl"
+    if obs.exists():
+        lines = obs.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in reversed(lines[-2000:]):
+            try:
+                d = json.loads(line)
+            except Exception:  # noqa: BLE001
+                continue
+            if d.get("process") != "P2":
+                continue
+            dd = d.get("data") or {}
+            ts = d.get("t")
+            if not ts:
+                continue
+            try:
+                when = datetime.fromisoformat(ts).timestamp()
+            except Exception:  # noqa: BLE001
+                continue
+            if now - when > window_s:
+                break
+            if dd.get("action") == "leave":
+                out["leaves"] += 1
+
     if not path.exists():
         return out
     try:
@@ -109,8 +140,6 @@ def _recent_activity(window_s: float = 300.0) -> dict:
             tail = f.read().decode("utf-8", errors="replace").splitlines()[1:]
     except Exception:  # noqa: BLE001
         return out
-    now = time.time()
-    from datetime import datetime, timezone
     for line in reversed(tail):
         try:
             d = json.loads(line)
@@ -161,8 +190,8 @@ def run() -> dict:
     # `leave_rate` 是累积的（0.70），所以「一直站着」和「一直在走」都会报 alive。
     # 这里看最近 15 分钟的转移里，有多少是她自己（action）走出来的。
     recent_long = _recent_activity(900.0)
-    no_own_motion = (recent_long["transitions"] > 0
-                     and recent_long["action_driven"] == 0)
+    no_own_motion = (recent_long["leaves"] == 0
+                     and recent_long["transitions"] > 0)
 
     if fresh == 0:
         verdict = "down"
@@ -235,10 +264,11 @@ def main(argv: list[str]) -> int:
               f"per_tension={r.get('per_tension')} leave_rate={r['leave_rate']} (累计)")
         rec = r.get("recent") or {}
         if rec.get("last_event_age_s") is not None:
-            print(f"  recent    : {int(rec['window_s'])}s 内转移 {rec['transitions']} 次，"
-                  f"其中她自己走的 {rec['action_driven']} 次；最后事件 {rec['last_event_age_s']}s 前")
-            if rec["transitions"] and rec["action_driven"] == 0:
-                print("              ⚠ 全是噪声推的，一次「离开」都没落地")
+            print(f"  recent    : {int(rec['window_s'])}s 内 leave {rec['leaves']} 次，"
+                  f"转移 {rec['transitions']} 次（噪声推的 {rec['transitions'] - rec['action_driven']}）；"
+                  f"最后事件 {rec['last_event_age_s']}s 前")
+            if rec["transitions"] and rec["leaves"] == 0:
+                print("              ⚠ 15 分钟一次 leave 都没有——她是真站着")
         print(f"  wells     : max_amp={r['max_amp']} / ceiling={r['ceiling']}")
         diff = r["space_steps"] - r["step_count"]
         print(f"  clocks    : stream={r['step_count']} space={r['space_steps']} "
