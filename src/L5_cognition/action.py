@@ -175,7 +175,22 @@ class ActionGate:
                 # 只挑「至少有她半径的一半那么远」的目标——那样一步才真的挪得开。
                 # 不乘任何系数（那会是 float 字面量，被 test_action 钉住）。
                 # 直接用「她自己量到的半径」当门槛：走到一个至少一个半径远的地方。
-                _pos = np.where(np.isfinite(dist) & (dist >= s))[0]
+                # 2026-11-18 夜：**这里也要排除「去过」的地方。**
+                #
+                # 环的最后一块拼图：`fresh` 分支会排除 visited，但 fresh 为空时落到这里，
+                # 而这里挑的是「最近的一个 >= s 的候选」——不管去没去过。
+                # 于是她从 B 出发时，A 被 visited 排除了、fresh 空了、fallback 又把 A 挑回来：
+                # A ↔ B 永远断不了。实测（22:10）：合并重复区域之后还是 distinct=2、back=1.0。
+                #
+                # 现在 fallback 也跳过 visited；全去过了才退回「最近的一个」（那时环是合理的——
+                # 她的世界就这么大，没有新地方可去了）。
+                _vis = set(visited or ()) if (visited is not None and places is not None) else set()
+                if _vis and places is not None:
+                    _pos = [k for k in range(len(places))
+                            if np.isfinite(dist[k]) and dist[k] >= s and places[k] not in _vis]
+                    _pos = np.asarray(_pos, dtype=int)
+                else:
+                    _pos = np.where(np.isfinite(dist) & (dist >= s))[0]
                 if _pos.size:
                     j = int(_pos[np.argmin(dist[_pos])])
                     unit = d[j] / dist[j]
