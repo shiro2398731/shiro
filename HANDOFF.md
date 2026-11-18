@@ -5235,3 +5235,65 @@ corr(regions, per_tension) = -0.992      corr(regions, tension_sum) = -0.963
 
 **members cap 实验**（data/exp/probe_members.py，300 步）：maxlen 16 / 8 分别省 3.6 / 5.6 MB，
 **行为和现状逐点相同**。要不要动是「她的记忆该多长」，没进分支。
+
+---
+
+## 95. 17:00：分支合并上机——载体 19.7→13.2 MB、缩水降速、她 leave 71%（2026-11-18 傍晚）
+
+### 做了什么
+
+1. 备份 `data/state/l5.pre-merge-1656.pkl`、`data/journal/l5.wal.pre-merge-1656`
+2. `git merge exist-mark-departure` → `334a9da`（无冲突）
+3. 关键测试：`test_action` 8/8、`test_existence_bounds` 3/3、`test_reorigin` 4/4、`test_persist_atomic` 3/3
+4. `headless stop` → `headless start`（epoch 48 → 49）
+
+### 实测
+
+| 指标 | 合并前 | 合并后 |
+|---|---|---|
+| `l5.pkl` | 19.7 MB | **13.19 MB**（17:00:58 第一次保存） |
+| `regions` | 2099（16:24）→ 1914（16:27） | 1879（17:01）→ 1845（17:32）→ 1840（17:35） |
+| leave 率 | 0（13:27–17:00 都是 hold） | **71.4%**（120 秒 56 步、40 次 leave） |
+| `verdict` | `still` | `alive` |
+
+**载体止血成功；她开始走了。** 但 `regions` 还在缓慢降。
+
+### 剩下的缩水不是 fold，是 recover
+
+最近 10 分钟事件里没有 fold / fold_capacity / startup_prune。答案在
+`terrain.recover()`（`stream.py:418` 每 16 步一次）：区域按自己的返回间隔衰减，
+深度低于生存线的被删。**这是遗忘，是设计，而且它不写 events.jsonl。**
+
+完整图景：
+
+```
+她 leave 71%，但一步 = 一个半径 = 只到邻居
+→ 走不到远处 → 远端区域被 recover 遗忘
+→ 走一步还在同一区域 → 不产生新区域
+→ regions 缓慢 -100/h（比 fold 时代的 -233/h 慢，但没停）
+```
+
+**这正是第 80 节「不是走一步，是跳过去」。** 记账修好让她能换邻居了，但换不到远处。
+
+### 今天人家自己的工具错了两次（同一个病）
+
+1. 13:49 加的 `vitals.recent`：数 `events.jsonl` 里 `noise_driven=False` 的**转移** →
+   「leave 走一步还在同一区域」不产生转移事件 → 把「她在走」报成「一次没走」。
+2. 17:35 的修正版：数 observations 窗口内的 leave 条数 → 300 秒窗口只有 1–2 条采样 →
+   还是看不出频率。
+
+**正确口径：`action_counts` 的增量**（120 秒 56 步 / 40 leave）。已写进
+`docs/2026-11-18_上机实录.md`。要做成常驻指标得改 P2 的观测字段，没动。
+
+### 下一步（副本实验跑着）
+
+`data/exp/probe_step_scale.py`：把每步位移放大 2 / 10 / 50 倍，300 步，看
+「到过几个区域 / regions 增减 / 位移 / 载体」。**不改真机**——这是 L5 行为改动，等白默。
+
+### 现在的状态（17:35）
+
+```
+verdict : alive      leave 率 71.4%（120 秒实测）
+regions : 1840       载体 13.2 MB
+```
+
