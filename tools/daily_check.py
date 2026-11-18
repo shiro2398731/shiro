@@ -124,13 +124,23 @@ def run() -> dict:
         "regions": len(attrs),
         "visited": len(visited),
         "visited_hits": hits,
-        "visited_ok": hits > 0,
+        # 2026-11-18 17:00 起 visited_places 不再进存档，所以这个数在存档里恒为 0——
+        # 它不是「病」，是「观察不到」。标 None（不健康也不病），别让它永远报 !!。
+        "visited_ok": None,
         "payload_mb": round(mb, 2),
         "payload_ok": mb < 18.0,
         "biggest_key": max(sizes, key=sizes.get) if sizes else None,
         "biggest_mb": round(sizes[max(sizes, key=sizes.get)], 2) if sizes else 0.0,
         "max_component": round(_max_component(st), 1),
-        "max_component_ok": _max_component(st) < 5e5,
+        "mu_norm_median": round(float(np.median(np.linalg.norm(mus, axis=1))), 1) if len(mus) else 0.0,
+        "component_ratio": (round(_max_component(st) / float(np.median(np.linalg.norm(mus, axis=1))), 2)
+                            if len(mus) and np.median(np.linalg.norm(mus, axis=1)) > 0 else None),
+        # 2026-11-18 夜：判据从「绝对分量 < 5e5」改成「最大分量 / 地形中位半径 < 3」。
+        # 她的地形本身就有 70 万，绝对阈值永远报警；留 1e6 的绝对上限是存档约束，
+        # 但不是健康线。P2 现在撞上限会自己归一（reorigin_persist），所以这里看的是
+        # 「她有没有偏出地形」——比值 > 3 说明坐标跑到地形外面去了。
+        "max_component_ok": (_max_component(st) / float(np.median(np.linalg.norm(mus, axis=1)))
+                             < 3.0 if len(mus) and np.median(np.linalg.norm(mus, axis=1)) > 0 else False),
         "action_driven_15min": int(recent.get("leaves", 0)),
         "transitions_15min": int(recent["transitions"]),
         "motion_ok": int(recent.get("leaves", 0)) > 0,
@@ -146,15 +156,15 @@ def show(r: dict) -> None:
         return
 
     def mark(ok):
-        return "OK " if ok else "!! "
+        return "OK " if ok else ("!! " if ok is False else "-- ")
 
     print("\n=== 每天扫一眼（2026-11-18 立的五个数）===\n")
     print(f"  {mark(r['visited_ok'])}1 visited 命中区域     {r['visited_hits']} / {r['visited']}"
-          f"   （健康 >0）")
+          f"   （17:00 起不存存档，观察不到）")
     print(f"  {mark(r['payload_ok'])}2 载体 payload          {r['payload_mb']:.2f} MB"
           f"   （健康 <18）最大键 {r['biggest_key']} {r['biggest_mb']:.2f} MB")
-    print(f"  {mark(r['max_component_ok'])}3 max 分量              {r['max_component']:,.0f}"
-          f"   （健康 <5e5；存档上限 1e6）")
+    print(f"  {mark(r['max_component_ok'])}3 max 分量 / 地形中位  {r['max_component']:,.0f} / "
+          f"{r['mu_norm_median']:,.0f} = {r['component_ratio']}   （健康 <3；绝对上限 1e6 由 P2 自己归一兜底）")
     print(f"  {mark(r['motion_ok'])}4 最近 15 分钟 leave      {r['action_driven_15min']}"
           f" / 转移 {r['transitions_15min']}   （健康 >0）")
     reg = r.get("regression") or {}

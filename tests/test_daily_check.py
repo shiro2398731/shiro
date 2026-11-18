@@ -31,11 +31,13 @@ def test_five_numbers_are_present() -> None:
 def test_health_flags_are_consistent() -> None:
     r = run()
     assert r["payload_ok"] == (r["payload_mb"] < 18.0)
-    assert r["max_component_ok"] == (r["max_component"] < 5e5)
+    # 2026-11-18 夜：判据从「绝对分量 < 5e5」改成「最大分量 / 地形中位半径 < 3」
+    assert r["max_component_ok"] == ((r["component_ratio"] or 99) < 3.0)
     assert r["motion_ok"] == (r["action_driven_15min"] > 0)
-    assert r["visited_ok"] == (r["visited_hits"] > 0)
-    print(f"       flags consistent: payload={r['payload_ok']} maxcomp={r['max_component_ok']} "
-          f"motion={r['motion_ok']} visited={r['visited_ok']}")
+    # visited 不再进存档 → 观察不到，标记为 None（不健康也不是病）
+    assert r["visited_ok"] is None
+    print(f"       flags consistent: payload={r['payload_ok']} "
+          f"ratio={r['component_ratio']} motion={r['motion_ok']} visited={r['visited_ok']}")
 
 
 def main() -> int:
