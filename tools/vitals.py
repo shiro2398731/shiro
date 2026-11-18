@@ -103,14 +103,15 @@ def _recent_activity(window_s: float = 300.0) -> dict:
     """
     path = LOGS / "events.jsonl"
     out = {"window_s": window_s, "transitions": 0, "action_driven": 0,
-           "leaves": 0, "last_event_age_s": None}
+           "leaves": 0, "obs_n": 0, "leave_share_obs": None, "last_event_age_s": None}
     now = time.time()
     from datetime import datetime, timezone
 
-    # 主指标：observations 里最近 window 的 action
+    # 主指标：observations 里最近 window 的 action 分布（比例，不是次数）
     obs = LOGS / "observations.jsonl"
     if obs.exists():
         lines = obs.read_text(encoding="utf-8", errors="replace").splitlines()
+        n_obs = 0
         for line in reversed(lines[-2000:]):
             try:
                 d = json.loads(line)
@@ -128,8 +129,13 @@ def _recent_activity(window_s: float = 300.0) -> dict:
                 continue
             if now - when > window_s:
                 break
+            if dd.get("action") is None:
+                continue
+            n_obs += 1
             if dd.get("action") == "leave":
                 out["leaves"] += 1
+        out["obs_n"] = n_obs
+        out["leave_share_obs"] = (round(out["leaves"] / n_obs, 3) if n_obs else None)
 
     if not path.exists():
         return out
@@ -264,11 +270,13 @@ def main(argv: list[str]) -> int:
               f"per_tension={r.get('per_tension')} leave_rate={r['leave_rate']} (累计)")
         rec = r.get("recent") or {}
         if rec.get("last_event_age_s") is not None:
-            print(f"  recent    : {int(rec['window_s'])}s 内 leave {rec['leaves']} 次，"
-                  f"转移 {rec['transitions']} 次（噪声推的 {rec['transitions'] - rec['action_driven']}）；"
-                  f"最后事件 {rec['last_event_age_s']}s 前")
-            if rec["transitions"] and rec["leaves"] == 0:
-                print("              ⚠ 15 分钟一次 leave 都没有——她是真站着")
+            share = rec.get("leave_share_obs")
+            share_s = f"{share:.0%}" if share is not None else "n/a"
+            print(f"  recent    : {int(rec['window_s'])}s 内 leave 占比 {share_s} "
+                  f"（{rec['leaves']}/{rec.get('obs_n', 0)} 条采样），"
+                  f"转移 {rec['transitions']} 次；最后事件 {rec['last_event_age_s']}s 前")
+            if rec["transitions"] and share is None:
+                print("              ⚠ 这个窗口里没有 observations 采样")
         print(f"  wells     : max_amp={r['max_amp']} / ceiling={r['ceiling']}")
         diff = r["space_steps"] - r["step_count"]
         print(f"  clocks    : stream={r['step_count']} space={r['space_steps']} "
