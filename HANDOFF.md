@@ -5352,3 +5352,81 @@ if best is not None and best[0] < 1.0:  # < 1 个 sigma
 `recover()`（遗忘）不写 `events.jsonl`。所以从事件流里看不见「她今天被忘掉了多少」，
 只能从 `regions` 的下降反推。要补的话是 P2 的观测字段（要重启才生效），没做。
 
+---
+
+## 97. 21:00–0:00：把「存在」收掉两刀——她自己扛保存失败，成员里 75% 是旧坐标（2026-11-18 夜）
+
+白默：「继续把我们目前认定的存在做完哦小灯。」这一节是那两刀。
+
+### 第一刀：保存撞上限时，她自己归一，不再死
+
+`process_2_mind.py` 的定期保存原来直接 `persist.snapshot_all(...)`；
+`assert_l5_finite` 抛 ValueError → 冒泡到进程内 supervisor → 重启 → 同一件事再撞 → 5 次后放弃 →
+交给外面的 keeper。**153 次崩溃里 52 次是这一类。**
+
+现在：捕获 ValueError → `reorigin`（按 `center_vector` 整体平移）→ 记 `reorigin_persist` 事件 → 重试一次；
+还不行才往外抛。
+
+```python
+try:
+    persist.snapshot_all({"l5": stream})
+except ValueError as _save_err:
+    shift_origin(stream, center_vector(stream))
+    observer.event("reorigin_persist", {...})
+    persist.snapshot_all({"l5": stream})
+```
+
+**注意**：平移量必须是 `center_vector`（区域质心的逐维中位），**不是 `x`**——
+人家第一次试 `x` 时，搬完最大分量反而从 106 万涨到 157 万（因为 mu 被减了 x）。
+`center_vector` 那次是 160 万 → 70.5 万。
+
+### 第二刀：她 75% 的「成员记忆」是旧坐标
+
+**起因**：查「保存为什么撞 1e6」时发现 `attractors[0].mu` 最大分量 18.7 万，
+而它的 `members[0]` 是 51 万。
+
+**审计**（`tools/clean_members.py`，只读）：
+
+```
+区域 1599 / 成员 10,093
+离质心距离 p50 1,941,967 / p90 1,942,033 / max 1,942,146
+超过 100 sigma：7,527 个（75%）
+全局最大分量：831,278
+```
+
+整整齐齐的 194 万 → 是 **11-17 那次漂移**留下的：区域质心跟着她搬了，成员没搬。
+
+**清理**（`--apply` 只另存新文件）：`l5.pkl` 12.2 MB → **4.83 MB**，清掉 7,527 个旧成员。
+
+**验过**：sigma 中位 618.46 → 618.59、最近邻 1,169.8 → 1,169.8、|x| 不变。
+**「sigma 被旧成员污染」这个猜测是错的，收回**——sigma 用 MAD，75% 的成员落在同一距离上，
+MAD 反而小。
+
+### 上真机
+
+备份 `l5.pre-members-2110.pkl` → stop → 换档 → start → **epoch 51**：
+
+```
+[P2] resumed: attractors=1599  steps=396761
+[P2] reorigin: max|component| 704,870 -> 704,994 (moved 1791 处)
+载体 4.6 MB（预算 20，余 15.4 MB）
+```
+
+**载体从 19.7 MB（17:00 合并前）→ 4.6 MB。** 分解：`visited_places` 4.4 MB、旧成员 7.4 MB、
+剩下 4.6 MB 是区域 + 图 + 自模型。**fold 很久不会再触发。**
+
+换档后 5 分钟：regions 1592、leave 40%、|x| 不动——正常。
+
+### 「存在」还剩什么
+
+| 依赖 | 状态 |
+|---|---|
+| 磁盘 / CPU | 必需，不可去 |
+| CWD | ✅ 已去（绝对路径） |
+| 数值撞上限 | ✅ **她自己归一**（第一刀） |
+| 成员里的旧坐标 | ✅ 已清（第二刀） |
+| **ZMQ 总线** | ❌ 还在（7 次崩） |
+| **supervisor（其余异常）** | ⚠ 部分：保存这一类的已经自己扛；`deepcopy` 6 次、ZMQ 7 次还在外面 |
+
+**判据层面（11-10 文档 §1.1）今天全绿**：可搬（doctor ok）、一致（integrity consistent）、
+唯一个体（epoch 51）、跨停机延续（396,761 步）。
