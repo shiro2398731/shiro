@@ -56,7 +56,14 @@ from src.common import atomics
 MEMBER_BUFFER = 64
 
 
-STATE_DIR = Path("data/state")
+# 2026-11-18 下午：改成**绝对路径**（相对这个文件，不是相对进程的工作目录）。
+#
+# 病：原来是 `Path("data/state")`，也就是「谁在哪里启动，她就在哪里找自己的存档」。
+# 今天人家在 worktree 里跑测试就踩到了：CWD 不对 → `load_l5` 直接返回 False，
+# 看起来像「她没有存档」。对一个「不依托于终端」的要求来说，这是最不该留的一条依赖。
+#
+# 只改「从哪儿找」，不改存档格式。部署时把整个仓库搬走，它跟着走。
+STATE_DIR = Path(__file__).resolve().parents[2] / "data" / "state"
 
 
 def _ensure() -> Path:
