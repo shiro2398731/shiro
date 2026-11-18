@@ -81,6 +81,9 @@ def run() -> dict:
     sp = st.landscape.state_space
     attrs = sp.attractors()
     ts = st.drive.tensions(sp, st.graph)
+    # 尺度无关的张力强度（2026-11-18 10:10）。sum 会随结构膨胀，这个不会。
+    _tsum = sum(t.amount for t in ts) if ts else 0.0
+    per_tension = round(_tsum / max(1, len(ts)), 4) if ts else 0.0
     acts = st.action_counts
     tot = sum(acts.values()) or 1
     leave_rate = acts.get(1, 0) / tot
@@ -111,6 +114,7 @@ def run() -> dict:
         "min_edges": min_edges,
         "tensions": len(ts),
         "global_tension": round(sum(t.amount for t in ts), 2),
+        "per_tension": per_tension,
         "leave_rate": round(leave_rate, 3),
         "max_amp": round(max_amp, 4),
         "ceiling": float(sp.ceiling),
@@ -150,7 +154,7 @@ def main(argv: list[str]) -> int:
         print(f"  structure : regions={r['regions']} edges={r['edges']} "
               f"(min_edges={r['min_edges']}) folded={r['folded']}")
         print(f"  activity  : tensions={r['tensions']} g_tension={r['global_tension']} "
-              f"leave_rate={r['leave_rate']}")
+              f"per_tension={r.get('per_tension')} leave_rate={r['leave_rate']}")
         print(f"  wells     : max_amp={r['max_amp']} / ceiling={r['ceiling']}")
         diff = r["space_steps"] - r["step_count"]
         print(f"  clocks    : stream={r['step_count']} space={r['space_steps']} "
