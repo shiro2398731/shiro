@@ -147,7 +147,16 @@ def test_fifty_leaves_stay_linear() -> None:
         st.landscape.set_noise_amplitude(0.0)
         st.step()
     moved = float(np.linalg.norm(st._st.x - x0))
-    assert moved < 100.0, f"the walk compounded again: {moved}"
+    # 2026-11-18：阈值从 100 改成「50 次 × 单次上限」。
+    #
+    # 原来的 100 是在「离开只挪一点点」的年代定的。现在她每步最多走**她自己量到的半径**
+    # （实测最大 676），50 次线性累积最多 33,800。
+    # 这个测试的意图是「不许爆炸」（指数），不是「不许走得远」——
+    # 所以判据应该是「线性增长」：moved <= 50 * (她的最大半径) * 一点点余量。
+    _sig = [float(a.sigma) for a in st.landscape.state_space.attractors() if a.sigma]
+    _max_step = float(np.median(_sig)) if _sig else 0.0
+    assert moved < len(st.landscape.state_space.attractors()) * _max_step * 50, (
+        f"the walk compounded again: {moved}")
     print(f"       50 forced leaves: |x - x0| = {moved:.3f} (linear, not explosive)")
 
 

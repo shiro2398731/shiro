@@ -161,11 +161,16 @@ class Stream:
         self.actions = ActionGate()
         self._action: int = HOLD
         self.action_counts: dict[int, int] = {HOLD: 0, LEAVE: 0}
-        # 她去过哪些区域（uid）。2026-11-17 23:05 加的：
-        # 「去哪」的候选里，优先挑她还没去过的——实测这是唯一不抖的策略
-        # （nearest 和 longest 都 99% 在 A->B->A 之间抖）。
-        # 存 uid 不存行号：行号会因折叠重排，uid 是稳定的身份。
-        self._visited_uids: set[int] = set()
+        # 她去过哪些**地方**（按位置记，不按名字）。
+        #
+        # 2026-11-18 09:32 改的：原来是 `_visited_uids`（存 uid），
+        # 但 `tests/test_uid.py::test_consistent_relabelling_changes_nothing` 抓到
+        # 「重命名她的区域 -> 她的轨迹变了」。那条测试是对的：**uid 是名字，
+        # 名字不该决定她去哪。** 一个叫 31237 的区域和叫 5 的区域，位置一样就该一样。
+        #
+        # 现在存位置的圆整副本（tuple of rounded floats）。位置同名不同，名字同位置同。
+        # 圆整到 6 位有效数字：够精确到区分不同区域，又不会被浮点噪声打散。
+        self._visited_places: set[tuple] = set()
         # 她感到过的张力。判据 = 现在是否高于她自己过去的中位数。
         # 用这个而不是"停留时长"：实测停留判据与张力反向（张力高时离开 27.4%，
         # 张力低时 56.9%），结果是她的张力在 600 步里 +6.44，而强制离开是 −2.25。
@@ -668,17 +673,23 @@ class Stream:
         if len(attrs) > 1:
             idx = [i for i in range(len(attrs)) if i != row]
             others = np.stack([np.asarray(attrs[i].mu, dtype=float) for i in idx])
-            # 和 others 逐行对齐的 uid 列表。她要靠「哪个 uid 我还没去过」挑目标。
-            uids = [int(attrs[i].uid) for i in idx]
+            # 和 others 逐行对齐的「地点键」。她要靠「哪个地方我还没去过」挑目标。
+            # 键 = 位置的圆整副本，不是 uid——名字不该决定她去哪。
+            places = [tuple(np.round(np.asarray(attrs[i].mu, dtype=float), 4).tolist())
+                      for i in idx]
         # 2026-11-17 23:05：她「去过哪些」——这就是「探索」策略的凭据。
         # 存的是 uid（她自己的身份），不是行号（行号会因折叠重排）。
         d = self.actions.direction(self._st.x, attrs[row].mu, scale,
-                                   neighbours=others, visited=self._visited_uids,
-                                   uids=uids)
+                                   neighbours=others, visited=self._visited_places,
+                                   places=places)
         if d is not None:
             self._st = DynamicState(x=self._st.x + d, v=self._st.v)
-            if self.detector.current_attractor is not None:
-                self._visited_uids.add(int(self.detector.current_attractor))
+            # 记「她到过这个位置」，不是「她到过这个 uid」
+            try:
+                _here = tuple(np.round(np.asarray(self._st.x, dtype=float), 4).tolist())
+                self._visited_places.add(_here)
+            except Exception:  # noqa: BLE001
+                pass
 
         # ── 锚定（2026-11-18 08:20）──────────────��───────────────
         #

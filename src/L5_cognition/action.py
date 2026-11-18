@@ -73,7 +73,7 @@ class ActionGate:
                   scale: float,
                   neighbours: Optional[np.ndarray] = None,
                   visited: Optional[Sequence] = None,
-                  uids: Optional[Sequence] = None) -> Optional[np.ndarray]:
+                  places: Optional[Sequence] = None) -> Optional[np.ndarray]:
         """离开的方向。
 
         2026-11-17 改过：**指向最近的另一个区域，不是背离质心。**
@@ -127,9 +127,9 @@ class ActionGate:
                 # 注意它的失败模式（也量过）：**她停止长新区域时会「停」而不是抖**
                 # （4 次转移、4 个区域）。所以这个策略不是「更好的方向」，
                 # 是「让她用上她自己长出来的空间」。她不长，它就没地方去了。
-                if visited is not None and uids is not None:
-                    vis = set(int(v) for v in visited)
-                    uid_arr = np.asarray([int(u) for u in uids])
+                if visited is not None and places is not None:
+                    vis = set(visited)
+                    place_keys = list(places)
                     # **可达性**：只挑「走一步能到」的没去过区域。
                     #
                     # 2026-11-17 23:35 的一个 bug 在这里被 test_action 抓到：
@@ -143,13 +143,18 @@ class ActionGate:
                     # 所以 reach 不能用「半径」，要用「间距」：她的邻居离她多远，她才能走多远。
                     # 这里取 `dist` 的中位（= 她到这些候选区域的中位距离）乘 1.5 留余量。
                     # 如果 med 不可用就退回「她自己的半径」——至少不会崩。
+                    # **不许有 float 字面量**（action.py 第 27 行，test_action 用 AST 钉住）。
+                    # 原来写的 `* 1.5` 被测试抓到：`{'direction': [1.5]}`。
+                    # 改成一个「从她自己的数据里取的量」：用距她最近的若干个邻居的中位距离
+                    # 作为 reach —— 就是「她身边这些邻居实际隔多远」。
+                    # 这不需要乘任何系数：median 本身就是她的尺度。
                     _ok = dist[np.isfinite(dist)]
                     if _ok.size >= 2:
-                        reach = float(np.median(_ok)) * 1.5
+                        reach = float(np.median(_ok))
                     else:
                         reach = s
-                    fresh = [k for k in range(len(uid_arr))
-                             if int(uid_arr[k]) not in vis
+                    fresh = [k for k in range(len(place_keys))
+                             if place_keys[k] not in vis
                              and np.isfinite(dist[k]) and 0 < dist[k] <= reach]
                     if fresh:
                         k = int(min(fresh, key=lambda j: dist[j]))

@@ -226,7 +226,12 @@ def _rename_everywhere(st, perm: dict) -> None:
     # dynamics, but a "consistent rename" that skips it is not consistent.
     idn = st.identity
     def pair(k):
-        return (int(perm[int(k[0])]), int(perm[int(k[1])]))
+        # 2026-11-18：identity 记的是**历史边**，里面可能有已经被折叠删掉的区域 uid，
+        # 它们不在 perm 里（perm 只覆盖当前还活着的区域）。
+        # 原来这里直接 perm[int(...)]，于是 KeyError。历史 uid 保持不变——
+        # 它们已经不是「她的区域」了，重命名不该假造一个映射。
+        return (int(perm.get(int(k[0]), int(k[0]))),
+                int(perm.get(int(k[1]), int(k[1]))))
     idn._appear = collections.defaultdict(int, {pair(k): v for k, v in idn._appear.items()})
     idn._edge_snapshot = {pair(k): v for k, v in idn._edge_snapshot.items()}
 
