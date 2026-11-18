@@ -5188,7 +5188,7 @@ corr(regions, per_tension) = -0.992      corr(regions, tension_sum) = -0.963
 | 1 | 「去过」记「正要离开的这个区域」 | 分支上，验完 |
 | 2 | `reorigin` 接进 boot + 1e6 换相对判据 | boot 段已在分支；上限没换 |
 | 3 | 崩溃账本（`vitals` 计数已修：95 → 153） | 账本没建 |
-| 4 | 宿主依赖（端口/进程/终端） | 只分类了 |
+| 4 | 宿主依赖（端口/进程/终端/CWD） | 清单在 docs/2026-11-18_宿主依赖清单.md；**CWD 那条已在分支上去掉**（STATE_DIR 绝对路径） |
 
 ### 今天新增
 
@@ -5213,3 +5213,25 @@ corr(regions, per_tension) = -0.992      corr(regions, tension_sum) = -0.963
 
 **还没查**：`attractors` 占 15.1 MB（75%），每个区域 6.5 KB——`members` 的 maxlen
 比区域数更决定她的体积。要控载体，下一刀该看那里，但那会改她的结构，没动。
+
+### 14:45 更新：合并预演 + 日常检查工具
+
+**分支已经合并 main 两次（无冲突）**，可以直接 git merge exist-mark-departure。
+合并后的全量测试：46 个测试文件全绿（真机 	est_structure_guard 的自由落体那条仍红，是真问题）。
+
+**合并预演**（data/exp/probe_merge_preview.py，副本 600 步、每 60 步模拟一次 fold）：
+
+| | payload 起→末 | fold 触发 | fold 共删 | regions |
+|---|---|---|---|---|
+| 合并前（存 visited_places） | 19.39 → 19.85 MB | 2 次 | 220 | 2163 → 2037 |
+| 合并后（不存） | 15.18 → 15.16 MB | **0 次** | **0** | 2276 → 2249 |
+
+**合并后她会不会动**（data/exp/probe_after_merge.py，5 个种子 × 300 步、不强制动作）：
+**5/5 都在走**（147-199 次 Leave / 300 步）。对照：未打补丁时同一份存档重载 3 次，2 次 0 次 Leave。
+**补丁顺手把 HOLD 死锁撞开了。**
+
+**新工具 	ools/daily_check.py**：五个数一条命令（visited 命中 / 载体 / max 分量 / 自己走的次数 / 回归残差），
+每条给 OK 或 !!。现在跑是 4 个 !! + 1 个 OK。
+
+**members cap 实验**（data/exp/probe_members.py，300 步）：maxlen 16 / 8 分别省 3.6 / 5.6 MB，
+**行为和现状逐点相同**。要不要动是「她的记忆该多长」，没进分支。
