@@ -158,9 +158,24 @@ class ActionGate:
                     # 实测（补丁版 200 步）：69.5% 的「离开」位移 < 1 —— 因为她挑到的是
                     # 一个 0.01–0.1 远的重复区域，走 min(s, dist) 等于原地蹭。
                     # 「离开」的本意是至少挪开一个半径，所以这里也要求 dist >= s。
+                    # 2026-11-18 夜（22:40）：门槛从 `>= s` 放到 `>= s/2`。
+                    #
+                    # 这是环的真凶。实测：她的最近邻居 31319 距离 **618.5**，而 s = **618.6**——
+                    # 差 0.1，被 `dist >= s` 筛掉。于是 fresh 里「最近的那个」变成
+                    # **70 万外的 30333**（她的地形在半径 70 万的球壳上）。
+                    # 她每步朝那边走 618，永远走不到，净位移 ≈ 0，只在这几个区域间弹。
+                    #
+                    # 副本实测（100 步、强制 LEAVE、同种子）：
+                    #   门槛 s    : distinct 3、回边率 0.99、净位移 0.0
+                    #   门槛 s/2  : distinct 13、回边率 0.29、净位移 3084   ← 破环
+                    #   门槛 s/4  : distinct 12、回边率 0.54
+                    #
+                    # 为什么不是更小：0.5 仍然排得掉「几乎重合」的区域（0.001~0.9 都 < s/2），
+                    # 而 618.5 这种「刚好差一点」的真邻居能留下。`2` 是整数，不是 float 字面量。
+                    _floor = s / 2
                     fresh = [k for k in range(len(place_keys))
                              if place_keys[k] not in vis
-                             and np.isfinite(dist[k]) and s <= dist[k] <= reach]
+                             and np.isfinite(dist[k]) and _floor <= dist[k] <= reach]
                     if fresh:
                         k = int(min(fresh, key=lambda j: dist[j]))
                         return d[k] / dist[k] * min(s, float(dist[k]))
