@@ -134,13 +134,20 @@ class ActionGate:
                     #
                     # 2026-11-17 23:35 的一个 bug 在这里被 test_action 抓到：
                     # 原来取 `fresh[0]`（列表里第一个没去过的），它可能在十万单位外。
-                    # 她一步最多走自己的半径（617），走完还在原地——于是
-                    # `test_do_leave_lowers_the_chance_of_staying` 实测 do(leave) 的
-                    # stay_share 是 **1.0**（一步都没换成区域）。
                     #
-                    # 现在：没去过的里面只留「距离 <= 一步能到」的，按距离由近到远挑。
-                    # 全都太远就退回最近邻——不是放弃探索，是**不假装能一步到远处**。
-                    reach = s
+                    # 2026-11-18 09:05 修的第二个 bug（更要命）：人家当时把 reach 写成
+                    # `s`（她自己的半径，实测中位 617），**而她的最近邻距离中位是 717**。
+                    # 617 < 717 -> 一个都够不着 -> fresh 永远为空 -> 退回最近邻 -> 她在
+                    # 两个区域之间 100% 来回弹（转移图只有 2 个节点、回头率 1.000）。
+                    #
+                    # 所以 reach 不能用「半径」，要用「间距」：她的邻居离她多远，她才能走多远。
+                    # 这里取 `dist` 的中位（= 她到这些候选区域的中位距离）乘 1.5 留余量。
+                    # 如果 med 不可用就退回「她自己的半径」——至少不会崩。
+                    _ok = dist[np.isfinite(dist)]
+                    if _ok.size >= 2:
+                        reach = float(np.median(_ok)) * 1.5
+                    else:
+                        reach = s
                     fresh = [k for k in range(len(uid_arr))
                              if int(uid_arr[k]) not in vis
                              and np.isfinite(dist[k]) and 0 < dist[k] <= reach]
