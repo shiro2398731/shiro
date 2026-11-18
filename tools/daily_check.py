@@ -72,8 +72,11 @@ def _tension_regression(hours: float = 12.0) -> dict:
     """
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
+    log = LOGS / "observations.jsonl"
+    if not log.exists():          # 副本 / 新机器没有日志：这一条跳过，不假装通过
+        return {"ok": None, "n": 0}
     rows = []
-    for line in (LOGS / "observations.jsonl").read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             d = json.loads(line)
         except Exception:  # noqa: BLE001
