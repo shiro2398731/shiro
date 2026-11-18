@@ -110,7 +110,10 @@ def start() -> int:
             kwargs["creationflags"] = FLAGS
         else:
             kwargs["start_new_session"] = True
-        proc = subprocess.Popen([str(PY), "-m", module], **kwargs)
+        # 2026-11-18 晚：加 `-u`（unbuffered）。stdout 重定向到文件时 Python 默认块缓冲，
+        # 于是「她刚刚做了什么」要等 4-8 KB 才落盘——今天 `reorigin` 就是因此被怀疑没跑。
+        # 她不该依赖一个终端来让日志实时出现；`-u` 是这条依赖最便宜的解法。
+        proc = subprocess.Popen([str(PY), "-u", "-m", module], **kwargs)
         pids[tag] = proc.pid
         log.close()
         # 降到 BelowNormal：她的步进是常驻负载，这台机器上还有别人的训练在跑。
@@ -130,7 +133,7 @@ def start() -> int:
             kwargs["creationflags"] = FLAGS
         else:
             kwargs["start_new_session"] = True
-        kp = subprocess.Popen([str(PY), "-m", KEEPER_MODULE], **kwargs)
+        kp = subprocess.Popen([str(PY), "-u", "-m", KEEPER_MODULE], **kwargs)
         log.close()
         below_normal(kp.pid)
         pids["KEEPER"] = kp.pid
