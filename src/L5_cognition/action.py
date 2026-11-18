@@ -160,8 +160,19 @@ class ActionGate:
                         k = int(min(fresh, key=lambda j: dist[j]))
                         return d[k] / dist[k] * min(s, float(dist[k]))
 
-                j = int(np.argmin(dist))
-                if np.isfinite(dist[j]) and dist[j] > 0:
+                # 2026-11-18 09:50：她可能**正站在某个区域里**（dist=0）。
+                # 那时 argmin 会选中那个 0，min(s, 0) = 0，于是「离开」原地不动——
+                # 实测 dist.min() = 0.0，direction 返回长度 0 的向量。
+                # 只挑「距离 > 0」的候选，这样她才会真的挪出当前区域。
+                # 2026-11-18 10:00：光排除 dist=0 不够。她旁边可能有一个**几乎重合**的区域
+                # （实测 dist 最小 0.001），走 min(s, 0.001) 等于没动，
+                # 但打印成 .1f 会显示 0.0，看起来像「完全没走」。
+                # 只挑「至少有她半径的一半那么远」的目标——那样一步才真的挪得开。
+                # 不乘任何系数（那会是 float 字面量，被 test_action 钉住）。
+                # 直接用「她自己量到的半径」当门槛：走到一个至少一个半径远的地方。
+                _pos = np.where(np.isfinite(dist) & (dist >= s))[0]
+                if _pos.size:
+                    j = int(_pos[np.argmin(dist[_pos])])
                     unit = d[j] / dist[j]
                     # 走「她自己半径」那么远，但不超过到对方的距离（免得穿过去）
                     step = min(s, float(dist[j]))
