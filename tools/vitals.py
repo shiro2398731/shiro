@@ -53,21 +53,40 @@ def _crashes() -> dict:
     2026-11-18：加这个的原因是 11-17 夜里 P2 崩了 4 次、每次 supervisor 自己重启，
     而 `vitals` 的 verdict 一直是 `alive` —— **没有人知道她崩过**。
     她在重启后十几秒内又站起来，所以心跳永远是新鲜的。
+
+    2026-11-18 下午修了计数（crash-auditor 查出来的两个漏）：
+      1. P2.log 是两种编码的拼盘（第 32-1407 行是 GBK），`errors="replace"` 把 GBK 的
+         「崩溃」读成乱码，31 条一条都没数到；
+      2. 「同一错误连续 5 次，放弃重启」不含「崩溃」二字，但那是进程真的退出，更严重。
+    所以逐行按 utf-8 解、失败再按 gbk 解；「崩溃」和「放弃重启」分开数。
+    旧口径数到 95，真实是 126 次崩溃行 + 27 次放弃重启 = 153。
     """
     log = LOGS / "P2.log"
+    out = {"total": 0, "restart": 0, "gave_up": 0, "last": None}
     if not log.exists():
-        return {"total": 0, "last": None}
-    total = 0
-    last = None
+        return out
     try:
-        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
-            if "崩溃" not in line:
-                continue
-            total += 1
-            last = line.strip()
+        raw = log.read_bytes()
     except Exception:  # noqa: BLE001
-        pass
-    return {"total": int(total), "last": last}
+        return out
+    for bline in raw.split(b"\n"):
+        if not bline:
+            continue
+        try:
+            line = bline.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                line = bline.decode("gbk")
+            except UnicodeDecodeError:
+                continue
+        if "崩溃" in line:
+            out["restart"] += 1
+            out["last"] = line.strip()
+        elif "放弃重启" in line:
+            out["gave_up"] += 1
+            out["last"] = line.strip()
+    out["total"] = out["restart"] + out["gave_up"]
+    return out
 
 
 def _recent_activity(window_s: float = 300.0) -> dict:
@@ -196,8 +215,8 @@ def main(argv: list[str]) -> int:
     print(f"  heartbeats: {r.get('fresh', 0)} fresh  {r.get('heartbeats')}")
     c = r.get("crashes") or {}
     if c.get("total"):
-        print(f"  crashes   : {c['total']} in P2.log (supervisor restarts; "
-              f"heartbeats stay fresh even so)")
+        print(f"  crashes   : {c['total']} = 崩溃行 {c.get('restart')} + 放弃重启 "
+              f"{c.get('gave_up')}（P2.log；旧口径只认「崩溃」二字，数到 95）")
     if "regions" in r:
         print(f"  structure : regions={r['regions']} edges={r['edges']} "
               f"(min_edges={r['min_edges']}) folded={r['folded']}")
