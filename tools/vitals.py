@@ -157,12 +157,21 @@ def run() -> dict:
     min_edges = int(getattr(st.drive, "min_edges", 64))
     edges = len(st.graph)
 
+    # 2026-11-18 下午：判词要能看见「她在，但一步没走」。
+    # `leave_rate` 是累积的（0.70），所以「一直站着」和「一直在走」都会报 alive。
+    # 这里看最近 15 分钟的转移里，有多少是她自己（action）走出来的。
+    recent_long = _recent_activity(900.0)
+    no_own_motion = (recent_long["transitions"] > 0
+                     and recent_long["action_driven"] == 0)
+
     if fresh == 0:
         verdict = "down"
     elif edges < min_edges:
         verdict = "tiny"
     elif not ts and max_amp >= 0.9 and leave_rate < 0.02:
         verdict = "frozen"
+    elif no_own_motion:
+        verdict = "still"
     elif ts and leave_rate > 0.02:
         verdict = "alive"
     else:
@@ -174,6 +183,7 @@ def run() -> dict:
         "verdict": verdict,
         "crashes": crash,
         "recent": recent,
+        "recent_long": recent_long,
         "heartbeats": hb,
         "fresh": fresh,
         "regions": len(attrs),
@@ -195,6 +205,7 @@ NOTES = {
     "alive": "有活动：张力和离开率都非零。",
     "quiet": "结构够，但这会儿没什么动静。",
     "frozen": "冻结：结构在、但她被吸住了（张力 0、离开率 0、max_amp 接近 ceiling）。",
+    "still": "站着：结构在、有转移，但最近 15 分钟一次都不是她自己走的（全是噪声推的）。",
     "tiny": "结构太小：边数低于 Drive.min_edges，张力算不出来，动作只能是 HOLD。",
     "down": "没有新鲜心跳——进程不在了。",
     "no-archive": "没有存档。",
