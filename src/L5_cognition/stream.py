@@ -676,24 +676,19 @@ class Stream:
         if len(attrs) > 1:
             idx = [i for i in range(len(attrs)) if i != row]
             others = np.stack([np.asarray(attrs[i].mu, dtype=float) for i in idx])
-            # 2026-11-18 夜（23:10）：**换成 uid 做「去过」的凭据。**
+            # 2026-11-18 夜：**回到位置键**（uid 化回滚）。
             #
-            # 为什么不用位置键：`places` 在构造时排除了当前区域（row 不进 idx），
-            # 而「去过」标记的恰恰是当前/到达的那个区域——两边永远差一个，
-            # 实测跑 40 步加 80 条，能对上区域的 key 恒为 1。环就是这么锁死的。
-            #
-            # uid 绕开了这个问题：候选列表里没有「当前区域」的 uid，但**其它**区域的 uid
-            # 都在，所以「去过 A、现在在 B」时，A 会被正确跳过。
-            places = [int(attrs[i].uid) for i in idx]
-        else:
-            places = []
-        # 她**正要离开的这个区域**，记成「去过」（uid，不是位置键）
-        self._visited_regions.add(int(attrs[row].uid))
+            # 人家 23:30 试过用 uid 判断「去过没去过」，看起来多了一个 31323，
+            # 但 `test_uid.py::test_consistent_relabelling_changes_nothing` 红了：
+            # **把区域重新编号之后她的轨迹变了**——那就违背了「uid 只是名字，不参与决策」。
+            # 所以回滚。破环靠的是 action.py 的门槛（dist >= s/2），那里只用距离，不碰 uid。
+            places = [tuple(np.round(np.asarray(attrs[i].mu, dtype=float), 4).tolist())
+                      for i in idx]
+            self._visited_places.add(tuple(np.round(np.asarray(attrs[row].mu, dtype=float), 4).tolist()))
 
         # 2026-11-17 23:05：她「去过哪些」——这就是「探索」策略的凭据。
-        # 存的是 uid（她自己的身份），不是行号（行号会因折叠重排）。
         d = self.actions.direction(self._st.x, attrs[row].mu, scale,
-                                   neighbours=others, visited=self._visited_regions,
+                                   neighbours=others, visited=self._visited_places,
                                    places=places)
         if d is not None:
             self._st = DynamicState(x=self._st.x + d, v=self._st.v)
