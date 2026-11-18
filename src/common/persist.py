@@ -227,8 +227,14 @@ def build_l5_payload(stream) -> dict:
     # 她最近 64 步的张力。动作判据（action.py）拿当前张力跟**这 64 步的中位**比；
     # 不存的话每次重启这段历史是空的，choose() 在没过去可比时返回 HOLD——
     # 于是每次重启后她有一段时间只会站着（64 步 @0.59 步/秒 ≈ 2 分钟）。
-    tension_history = [float(v) for v in
-                       (getattr(stream, "_tension_history", ()) or ())]
+    # 2026-11-18 08:28：这里原来直接迭代 deque，P2 的另一个线程同时在 append，
+    # 于是 `RuntimeError: deque mutated during iteration`，runner state 存不下来。
+    # 现在先 list() 拷一份（list() 也是一次迭代，所以整段用 try 兜住）。
+    try:
+        _th_iter = list(getattr(stream, "_tension_history", ()) or ())
+    except RuntimeError:
+        _th_iter = []
+    tension_history = [float(v) for v in _th_iter]
     # 2026-11-17 晚：HANDOFF 第 62 节那次系统排查里，这三个是「跨步累积 + 影响行为 +
     # 应该延续」的，之前全都没存。
     #

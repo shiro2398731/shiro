@@ -641,6 +641,31 @@ class Stream:
             if self.detector.current_attractor is not None:
                 self._visited_uids.add(int(self.detector.current_attractor))
 
+        # ── 锚定（2026-11-18 08:20）──────────────��───────────────
+        #
+        # 病：_apply_leave 每步直接把 x 挪 617，方向一致时**链式累积**。
+        # 实测：她从 11 月 17 日夜里跑到 11 月 18 日早上，|x| 到了 4,091,098，
+        # 全部 3197 个区域的质心都在 171 万 - 409 万之间。
+        # 结果 `assert_l5_finite` 拒绝保存（上限 1e6），P2 一晚上崩了 4 次。
+        #
+        # 这不是「探索错了」，是「探索没有边界」：她去没去过的地方没错，
+        # 但她不该在**离开所有区域之后**还一直往前走。
+        #
+        # 修法：每次离开之后，如果她离**最近的区域质心**超过「她自己的半径的 4 倍」，
+        # 就把她拉回那个质心上。4 倍是人家选的（可议），但它的含义是
+        # 「她可以在区域之间移动，但不该飘到没有区域的地方」。
+        try:
+            _attrs = space.attractors()
+            if _attrs:
+                _mus = np.stack([np.asarray(a.mu, dtype=float) for a in _attrs])
+                _d = np.linalg.norm(_mus - np.asarray(self._st.x, dtype=float), axis=1)
+                _j = int(np.argmin(_d))
+                _lim = 4.0 * float(scale) if scale else 0.0
+                if _lim > 0 and float(_d[_j]) > _lim:
+                    self._st = DynamicState(x=_mus[_j].copy(), v=self._st.v)
+        except Exception:  # noqa: BLE001
+            pass
+
     @property
     def action_name(self) -> str:
         return ACTION_NAMES.get(self._action, "hold")
