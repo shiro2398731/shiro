@@ -155,12 +155,20 @@ def main() -> int:
               f"（corr 中位 {cl['corr']}，n={cl['n']}；判据 corr < 0.05 算没断）")
 
     # 3) 休息：她会停
+    #
+    # 2026-11-20 0:30 诚实标注：**这一条现在测的是「她没动」（HOLD 占比），不是「她累了在休息」。**
+    # 代码里有个专门的休息场 `src/L5_cognition/rest.py`（RestField），但 `stream.py:232` 写着
+    # `self._use_rest = False`——**默认没接上**。
+    # 所以「HOLD > 0」能证明「她不是一直动」，**不能证明「她会休息」**。
     if "error" in ac:
         print(f"  -- 3 休息      {ac['error']}")
     else:
         resting = ac["hold_share"] > 0
         print(f"  {mark(resting)}3 休息      HOLD 占比 {ac['hold_share']:.3f}"
               f"（leave {ac['leave_share']:.3f}）—— 她不是一直动")
+        print(f"               （诚实：这测的是「她没动」，不是「她累了在休息」。")
+        print(f"                 rest.py 的休息场默认没接：stream.py:232 `self._use_rest = False`。")
+        print(f"                 要真验「休息」，得先把休息场接上——那是改行为，等白默定。）")
 
     print()
     return 0
