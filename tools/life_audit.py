@@ -78,15 +78,21 @@ def _recent_events(minutes: float = 20.0) -> dict:
     return out
 
 
-def _closure(minutes: float = 30.0) -> dict:
-    """最近 N 分钟里 P3 报的闭环状态（homeostasis）。"""
-    out = {"closure_ok": None, "corr": None, "n": 0}
+def _closure(hours: float = 24.0) -> dict:
+    """最近 N 小时里 P3 报的闭环状态（homeostasis）。
+
+    2026-11-20 0:40 修正：原来窗口 30 分钟，**永远抓不到数据**——
+    P3 的 `lifecycle` 快照**每 ~3.25 小时才写一次**（实测 30 条、间隔中位 11711 秒），
+    而每步写的 `envelope` 里没有 closure 字段。所以窗口必须按小时算。
+    """
+    out = {"closure_ok": None, "corr": None, "n": 0, "last_age_min": None}
     path = LOGS / "observations.jsonl"
     if not path.exists():
         return out
     now = datetime.now(timezone.utc)
     vals = []
-    for line in reversed(path.read_text(encoding="utf-8", errors="replace").splitlines()[-3000:]):
+    last_t = None
+    for line in reversed(path.read_text(encoding="utf-8", errors="replace").splitlines()[-6000:]):
         try:
             d = json.loads(line)
         except Exception:  # noqa: BLE001
@@ -100,9 +106,13 @@ def _closure(minutes: float = 30.0) -> dict:
             t = datetime.fromisoformat(d["t"])
         except Exception:  # noqa: BLE001
             continue
-        if (now - t).total_seconds() > minutes * 60:
+        if last_t is None:
+            last_t = t
+        if (now - t).total_seconds() > hours * 3600:
             break
         vals.append((bool(dd["closure_ok"]), dd.get("corr")))
+    if last_t is not None:
+        out["last_age_min"] = round((now - last_t).total_seconds() / 60.0, 1)
     if not vals:
         return out
     out["n"] = len(vals)
@@ -149,7 +159,9 @@ def main() -> int:
 
     # 2) 稳态：闭环
     if cl["closure_ok"] is None:
-        print("  -- 2 稳态      最近 30 分钟没有 P3 的闭环记录")
+        age = cl.get("last_age_min")
+        print(f"  -- 2 稳态      最近 24 小时没有 P3 的闭环记录"
+              + (f"（最后一次 lifecycle 在 {age} 分钟前）" if age is not None else ""))
     else:
         print(f"  {mark(cl['closure_ok'])}2 稳态      闭环 {cl['closure_ok']}"
               f"（corr 中位 {cl['corr']}，n={cl['n']}；判据 corr < 0.05 算没断）")
