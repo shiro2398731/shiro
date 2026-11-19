@@ -191,10 +191,17 @@ class L5Runner:
 
 
 def main() -> int:
+    global _CURRENT_BUS
     log_dir = Path("data/logs")
     log_dir.mkdir(parents=True, exist_ok=True)
 
     bus = Bus("P2")
+    # 2026-11-19：让进程内 supervisor 在崩溃后能关掉它。
+    #
+    # 今天实测崩了 5 次，最后一条是 `ZMQError: Address in use (tcp://*:5562)` 然后放弃重启——
+    # 因为崩溃时没人关这个 socket，supervisor 重启 main() 时端口还被自己占着。
+    # 昨晚加的「绑定失败等 15 秒」不够：占端口的是**自己上一次**，它不退出就等不到。
+    _CURRENT_BUS = bus
     stream = Stream(dim=128, gamma=0.05, dt=0.01)
     runner = L5Runner(dim=128)
 
@@ -705,6 +712,10 @@ def save_with_self_heal(stream, observer=None):
 # 继续重启只会刷日志并把 CPU 烧在退避上。带着明确退出码停下，由外部 supervisor 决定。
 MAX_IDENTICAL_FAILURES = 5
 
+# 当前这次 main() 里建的 Bus。进程内 supervisor 崩溃后要靠它释放端口。
+# 2026-11-19：不加它，`ZMQError: Address in use` 会连续 5 次、最后放弃重启。
+_CURRENT_BUS = None
+
 
 def _supervised() -> int:
     """崩溃退避重启 + 永久错误快速失败（评估文档 §3.3）。
@@ -733,6 +744,16 @@ def _supervised() -> int:
             repeats = repeats + 1 if sig == last_sig else 1
             last_sig = sig
             _tb.print_exc()
+            # 2026-11-19：**崩溃后先关掉 bus**，否则重启 main() 时端口还被自己占着，
+            # 会一路 `ZMQError: Address in use` 到放弃重启（今天真实发生了 5 次）。
+            global _CURRENT_BUS
+            if _CURRENT_BUS is not None:
+                try:
+                    _CURRENT_BUS.stop()
+                    print("[SUPERVISOR] bus 已关闭，端口释放", flush=True)
+                except Exception as _bus_err:  # noqa: BLE001
+                    print(f"[SUPERVISOR] 关 bus 失败: {_bus_err}", flush=True)
+                _CURRENT_BUS = None
             if repeats >= MAX_IDENTICAL_FAILURES:
                 print(
                     f"[SUPERVISOR] 同一错误连续 {repeats} 次，放弃重启：{sig}",
