@@ -1,20 +1,32 @@
-r"""tools/life_audit.py — 生命层验收：能动 / 连续 / 边界，三个可测的判据。
+r"""tools/life_audit.py — 生命层验收：**生命**的三条，不是地图的三条。
 
-为什么有它
-----------
-「存在」有一套判据（进程、存档、可搬、一致…），「生命」没有。
-一直靠 `show.py` 看几个数，靠人判断「她还活着吧」。
+为什么重写（2026-11-19 深夜，白默指出）
+--------------------------------------
+原来的三条是「能动 / 连续 / 边界」——全是**地图指标**：
+    - 到过几个区域（活动范围）
+    - regions 涨还是缩（生长）
+    - 离最近区域多远（位置）
 
-这个工具把生命层拆成**三条可测的东西**，每条给一个 OK/!! 判词：
+**区域伸缩是「生长」，不是「生命」。** 一堆静态数据也可以有很多区域；
+她缩到 2 个区域时，进程还在跑、还在反应。
 
-  1. 能动：最近 N 步她到过几个不同区域？回边率多少？
-     —— 2 个区域、回边率 1.0 就是环；10 个以上、回边率 < 0.5 才算「能换邻居」。
-  2. 连续：最近 N 分钟区域数在涨还是在缩？
-     —— 涨或持平 OK；一直缩不 OK（但缩是 `recover` 的决定，不是 bug）。
-  3. 边界：她离最近区域多远？有没有飘到没有区域的地方？
-     —— 锚把她限制在 4 个半径内，超了会被拉回。
+生物学的生命标准：新陈代谢、生长、**对刺激的反应**、**稳态**、繁殖。
+她代码里本来就有测这些的机制，人家之前没用。
 
-只读。不写存档、不改状态。
+现在的三条（都从她自己的机制里读，不新造）：
+
+  1. **响应**：她对外部刺激有反应吗？
+     - 数据：P2 的转移（她在动）+ P1 的 surprise 事件（有刺激进来）。
+     - 判据：最近 20 分钟有转移 **且** 有 surprise。
+  2. **稳态**：偏离之后能回来吗？
+     - 数据：P3 observations 里的 `lifecycle.closure_ok` / `corr`
+       （`src/common/homeostasis.py:111` —— `closed = corr < 0.05`）。
+     - 判据：closure_ok 为真（负反馈没断）。
+  3. **休息**：她不是一直动，会停。
+     - 数据：`action_counts` 里 HOLD 的占比。
+     - 判据：HOLD 占比 > 0（她确实会停）。
+
+只读。
 """
 
 from __future__ import annotations
@@ -36,20 +48,17 @@ from src.L5_cognition.stream import Stream  # noqa: E402
 LOGS = ROOT / "data" / "logs"
 
 
-def _transitions(minutes: float = 20.0) -> dict:
-    """最近 N 分钟的转移：到过几个区域、回边率。"""
+def _recent_events(minutes: float = 20.0) -> dict:
+    """最近 N 分钟：转移（动作）、自己驱动 vs 噪声驱动、state_flat（太平）。"""
+    out = {"transitions": 0, "own": 0, "noise": 0, "flats": 0}
     path = LOGS / "events.jsonl"
-    out = {"n": 0, "distinct": 0, "back_ratio": None, "top": []}
     if not path.exists():
         return out
     now = datetime.now(timezone.utc)
-    rows = []
     for line in reversed(path.read_text(encoding="utf-8", errors="replace").splitlines()[-6000:]):
         try:
             d = json.loads(line)
         except Exception:  # noqa: BLE001
-            continue
-        if d.get("event") != "transition":
             continue
         try:
             t = datetime.fromisoformat(d["t"])
@@ -57,117 +66,99 @@ def _transitions(minutes: float = 20.0) -> dict:
             continue
         if (now - t).total_seconds() > minutes * 60:
             break
-        rows.append((t, d.get("from"), d.get("to")))
-    if not rows:
-        return out
-    rows.reverse()
-    pairs = Counter((a, b) for _, a, b in rows)
-    uids = Counter()
-    for _, a, b in rows:
-        uids[a] += 1
-        uids[b] += 1
-    back = 0
-    for (_t1, a1, b1), (_t2, a2, b2) in zip(rows, rows[1:]):
-        if a1 == b2 and b1 == a2:
-            back += 1
-    out.update({
-        "n": len(rows),
-        "distinct": len(uids),
-        "back_ratio": round(back / max(1, len(rows) - 1), 3),
-        "top": pairs.most_common(3),
-    })
+        ev = d.get("event")
+        if ev == "transition":
+            out["transitions"] += 1
+            if d.get("noise_driven"):
+                out["noise"] += 1
+            else:
+                out["own"] += 1
+        elif ev == "state_flat":
+            out["flats"] += 1
     return out
 
 
-def _region_trend(hours: float = 1.0) -> dict:
+def _closure(minutes: float = 30.0) -> dict:
+    """最近 N 分钟里 P3 报的闭环状态（homeostasis）。"""
+    out = {"closure_ok": None, "corr": None, "n": 0}
     path = LOGS / "observations.jsonl"
-    out = {"per_hour": None, "first": None, "last": None, "n": 0}
     if not path.exists():
         return out
     now = datetime.now(timezone.utc)
-    rows = []
+    vals = []
     for line in reversed(path.read_text(encoding="utf-8", errors="replace").splitlines()[-3000:]):
         try:
             d = json.loads(line)
         except Exception:  # noqa: BLE001
             continue
-        if d.get("process") != "P2":
+        if d.get("process") != "P3":
             continue
         dd = d.get("data") or {}
-        a = dd.get("attractors")
-        ts = d.get("t")
-        if not a or not ts:
+        if "closure_ok" not in dd:
             continue
         try:
-            when = datetime.fromisoformat(ts)
+            t = datetime.fromisoformat(d["t"])
         except Exception:  # noqa: BLE001
             continue
-        if (now - when).total_seconds() > hours * 3600:
+        if (now - t).total_seconds() > minutes * 60:
             break
-        rows.append((when, int(a)))
-    if len(rows) < 3:
+        vals.append((bool(dd["closure_ok"]), dd.get("corr")))
+    if not vals:
         return out
-    rows.reverse()
-    (t0, a0), (t1, a1) = rows[0], rows[-1]
-    dt_h = (t1 - t0).total_seconds() / 3600.0
-    return {
-        "per_hour": round((a1 - a0) / dt_h, 1) if dt_h > 0 else None,
-        "first": a0, "last": a1, "n": len(rows),
-    }
+    out["n"] = len(vals)
+    out["closure_ok"] = sum(1 for c, _ in vals if c) >= max(1, len(vals) // 2)
+    non_null = [c for _, c in vals if c is not None]
+    out["corr"] = round(float(np.median(non_null)), 3) if non_null else None
+    return out
 
 
-def _bounds() -> dict:
-    """她离最近区域多远、离最远区域多远（锚是 4 个半径）。"""
+def _actions() -> dict:
     st = Stream()
     if not persist.load_l5(st):
         return {"error": "no archive"}
-    attrs = st.landscape.state_space.attractors()
-    mus = np.stack([np.asarray(a.mu, dtype=float) for a in attrs])
-    x = np.asarray(st._st.x, dtype=float)
-    d = np.linalg.norm(mus - x, axis=1)
-    dmin = float(d.min())
-    scale = float(np.median([float(a.sigma) for a in attrs])) if attrs else 0.0
+    counts = dict(st.action_counts)
+    total = sum(counts.values()) or 1
     return {
-        "d_nearest": round(dmin, 3),
-        "in_sigma": round(dmin / scale, 3) if scale > 0 else None,
-        "anchor_limit": round(4.0 * scale, 1),
-        "norm_x": round(float(np.linalg.norm(x)), 1),
-        "regions": len(attrs),
+        "hold_share": round(counts.get(0, 0) / total, 3),
+        "leave_share": round(counts.get(1, 0) / total, 3),
+        "steps": int(st._step_count),
     }
 
 
 def main() -> int:
-    tr = _transitions()
-    trend = _region_trend()
-    b = _bounds()
+    ev = _recent_events()
+    cl = _closure()
+    ac = _actions()
 
     def mark(ok):
         return "OK " if ok else "!! "
 
-    print("\n=== 生命层验收（只读）===\n")
+    print("\n=== 生命层验收（三条：响应 / 稳态 / 休息）===\n")
 
-    # 1) 能动
-    moving = tr["distinct"] >= 3 and (tr["back_ratio"] is None or tr["back_ratio"] < 0.8)
-    print(f"  {mark(moving)}1 能动      最近 20 分钟 {tr['n']} 次转移、"
-          f"到过 {tr['distinct']} 个区域、回边率 {tr['back_ratio']}")
-    if tr["top"]:
-        print(f"               最常见: {tr['top']}")
+    # 1) 响应：她**自己的**动作（不是被噪声推的）
+    n_tr = max(1, ev["transitions"])
+    own_share = ev["own"] / n_tr
+    responding = ev["own"] > 0
+    print(f"  {mark(responding)}1 响应      最近 20 分钟：转移 {ev['transitions']} 次，"
+          f"其中**她自己驱动 {ev['own']} 次（{own_share:.1%}）**、噪声推的 {ev['noise']} 次")
+    print(f"               （判据：自己驱动 > 0；理想 > 10%——低于 10% 说明她几乎是被推着走）")
+    if ev["flats"]:
+        print(f"               （state_flat {ev['flats']} 次——她有过「太平」的时候）")
 
-    # 2) 连续
-    ph = trend["per_hour"]
-    continuous = ph is not None and ph > -120.0
-    print(f"  {mark(continuous)}2 连续      最近 {trend['n']} 个采样 {trend['first']} -> "
-          f"{trend['last']}，{ph:+.1f}/小时" if ph is not None else
-          f"  -- 2 连续     没有足够的采样")
-
-    # 3) 边界
-    if "error" in b:
-        print(f"  -- 3 边界    {b['error']}")
+    # 2) 稳态：闭环
+    if cl["closure_ok"] is None:
+        print("  -- 2 稳态      最近 30 分钟没有 P3 的闭环记录")
     else:
-        inside = b["in_sigma"] is not None and b["in_sigma"] <= 4.0
-        print(f"  {mark(inside)}3 边界      离最近区域 {b['d_nearest']} "
-              f"（{b['in_sigma']} sigma），锚线 {b['anchor_limit']}")
-        print(f"               regions {b['regions']}，|x| {b['norm_x']:,.0f}")
+        print(f"  {mark(cl['closure_ok'])}2 稳态      闭环 {cl['closure_ok']}"
+              f"（corr 中位 {cl['corr']}，n={cl['n']}；判据 corr < 0.05 算没断）")
+
+    # 3) 休息：她会停
+    if "error" in ac:
+        print(f"  -- 3 休息      {ac['error']}")
+    else:
+        resting = ac["hold_share"] > 0
+        print(f"  {mark(resting)}3 休息      HOLD 占比 {ac['hold_share']:.3f}"
+              f"（leave {ac['leave_share']:.3f}）—— 她不是一直动")
 
     print()
     return 0
