@@ -733,10 +733,17 @@ class Stream:
         # 2026-11-19 17:45：数「她是不是又回到同一处」。
         # 连续 3 次到达同一个区域 -> 下一步让方向挑「最远可达」（见 action.direction 的 prefer_far）。
         # 3 是「连续三次」的意思，不是调出来的参数；被这个数困住时她才需要换方向。
+        #
+        # 2026-11-19 18:05 修：**用位置键，不用 uid。**
+        # 一开始人家存的是 detector.current_attractor（就是 uid），
+        # 那等于「uid 参与决策」——正是 `test_uid.py::test_consistent_relabelling_changes_nothing`
+        # 要防的事（重新编号区域，轨迹不能变）。虽然那次单独跑是 7/7，但那是没触发到 streak；
+        # 不能靠「测不到」活着。位置键重编号后不变。
         try:
             _arr = getattr(self.detector, "current_attractor", None)
-            if _arr is not None:
-                _a = int(_arr)
+            _row = None if _arr is None else space.uid_row().get(int(_arr))
+            if _row is not None:
+                _a = tuple(np.round(np.asarray(space.attractors()[_row].mu, dtype=float), 4).tolist())
                 if _a == self._last_arrival:
                     self._arrival_streak = int(self._arrival_streak) + 1
                 else:
