@@ -154,6 +154,11 @@ class ActionGate:
                         reach = float(np.median(_ok))
                     else:
                         reach = s
+                    # 2026-11-19 22:10：`prefer_far` 时 reach 要放宽到「最远那个」。
+                    # 测试抓到的 bug：reach 默认是中位距离，最远的候选比中位远，被 `dist <= reach` 排除，
+                    # 于是「挑最远」实际只挑到「中位以内最远的那个」——不是最远。
+                    if prefer_far and _ok.size >= 1:
+                        reach = max(reach, float(np.max(_ok)))
                     # 2026-11-18 下午：fresh 也要排除「几乎重合」的候选（dist < s）。
                     # 上面 10:00 那条只在 fallback 分支加了 dist >= s，fresh 分支漏了。
                     # 实测（补丁版 200 步）：69.5% 的「离开」位移 < 1 —— 因为她挑到的是
