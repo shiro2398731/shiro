@@ -133,15 +133,15 @@ def main() -> int:
     def mark(ok):
         return "OK " if ok else "!! "
 
-    print("\n=== 生命层验收（三条：响应 / 稳态 / 休息）===\n")
+    print("\n=== 生命层验收（三条：动量 / 稳态 / 休息）===\n")
 
-    # 1) 响应：她**自己的**动作（不是被噪声推的）
+    # 1) 动量连续性：她**带着速度**滑过边界（不是被噪声推着重置）
     n_tr = max(1, ev["transitions"])
     own_share = ev["own"] / n_tr
     responding = ev["own"] > 0
-    print(f"  {mark(responding)}1 响应      最近 20 分钟：转移 {ev['transitions']} 次，"
-          f"其中**她自己驱动 {ev['own']} 次（{own_share:.1%}）**、噪声推的 {ev['noise']} 次")
-    print(f"               （判据：自己驱动 > 0。比例仅供参考——**它对窗口高度敏感**：")
+    print(f"  {mark(responding)}1 动量      最近 20 分钟：转移 {ev['transitions']} 次，"
+          f"其中**带着速度滑过 {ev['own']} 次（{own_share:.1%}）**、被噪声推过 {ev['noise']} 次")
+    print(f"               （判据：带速度滑过 > 0。比例仅供参考——**它对窗口高度敏感**：")
     print(f"                 2026-11-19 深夜实测 10min 33% / 20min 27% / 30min 3.2% / 60min 3.5% / 120min 5.2%，")
     print(f"                 因为不同时段噪声驱动的转移密度差很多。比例低不等于她死了，只等于「这段时间她被推着走」。）")
     if ev["flats"]:
