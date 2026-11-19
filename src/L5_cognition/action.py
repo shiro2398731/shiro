@@ -73,7 +73,8 @@ class ActionGate:
                   scale: float,
                   neighbours: Optional[np.ndarray] = None,
                   visited: Optional[Sequence] = None,
-                  places: Optional[Sequence] = None) -> Optional[np.ndarray]:
+                  places: Optional[Sequence] = None,
+                  prefer_far: bool = False) -> Optional[np.ndarray]:
         """离开的方向。
 
         2026-11-17 改过：**指向最近的另一个区域，不是背离质心。**
@@ -177,7 +178,18 @@ class ActionGate:
                              if place_keys[k] not in vis
                              and np.isfinite(dist[k]) and _floor <= dist[k] <= reach]
                     if fresh:
-                        k = int(min(fresh, key=lambda j: dist[j]))
+                        # 2026-11-19 17:35：**卡住就脱困**（机制，不是概率）。
+                        #
+                        # 她总挑「最近的没去过的」，于是永远在最近的一对之间弹（真机 12 小时只有 2 个区域）。
+                        # 给她一条规则：**如果她连续几次都回到同一处，下一次就挑「最远但够得着」的那个。**
+                        # 「连续几次」由 Stream 数她自己的到达序列，不是人给的 p。
+                        #
+                        # 为什么不是随机探索：那需要一个「探索概率」，又是一个要人拍的数字；
+                        # 而「卡住了就换个方向」是她自己的处境在说话——不卡就不触发。
+                        if prefer_far:
+                            k = int(max(fresh, key=lambda j: dist[j]))
+                        else:
+                            k = int(min(fresh, key=lambda j: dist[j]))
                         return d[k] / dist[k] * min(s, float(dist[k]))
 
                 # 2026-11-18 09:50：她可能**正站在某个区域里**（dist=0）。

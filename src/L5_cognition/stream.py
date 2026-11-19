@@ -174,6 +174,11 @@ class Stream:
         # 2026-11-18 夜：真正用来判断「去过没去过」的是 uid，不是位置键。
         # 位置键留着只为兼容旧存档/别的工具；探索策略看这个。
         self._visited_regions: set[int] = set()
+        # 2026-11-19 17:40：**卡住检测**。连续几次离开后都到达同一处，就换「最远可达」的目标。
+        # 为什么不是随机探索：那需要一个「探索概率」，又是一个要人拍的数字；
+        # 而「卡住了就换个方向」是她自己的处境在说话——不卡就不触发。
+        self._arrival_streak: int = 0
+        self._last_arrival: int | None = None
         # 她感到过的张力。判据 = 现在是否高于她自己过去的中位数。
         # 用这个而不是"停留时长"：实测停留判据与张力反向（张力高时离开 27.4%，
         # 张力低时 56.9%），结果是她的张力在 600 步里 +6.44，而强制离开是 −2.25。
@@ -689,7 +694,8 @@ class Stream:
         # 2026-11-17 23:05：她「去过哪些」——这就是「探索」策略的凭据。
         d = self.actions.direction(self._st.x, attrs[row].mu, scale,
                                    neighbours=others, visited=self._visited_places,
-                                   places=places)
+                                   places=places,
+                                   prefer_far=(self._arrival_streak >= 3))
         if d is not None:
             self._st = DynamicState(x=self._st.x + d, v=self._st.v)
             # 记「她到过这个位置」，不是「她到过这个 uid」
@@ -721,6 +727,21 @@ class Stream:
                 _lim = 4.0 * float(scale) if scale else 0.0
                 if _lim > 0 and float(_d[_j]) > _lim:
                     self._st = DynamicState(x=_mus[_j].copy(), v=self._st.v)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 2026-11-19 17:45：数「她是不是又回到同一处」。
+        # 连续 3 次到达同一个区域 -> 下一步让方向挑「最远可达」（见 action.direction 的 prefer_far）。
+        # 3 是「连续三次」的意思，不是调出来的参数；被这个数困住时她才需要换方向。
+        try:
+            _arr = getattr(self.detector, "current_attractor", None)
+            if _arr is not None:
+                _a = int(_arr)
+                if _a == self._last_arrival:
+                    self._arrival_streak = int(self._arrival_streak) + 1
+                else:
+                    self._arrival_streak = 1
+                    self._last_arrival = _a
         except Exception:  # noqa: BLE001
             pass
 
