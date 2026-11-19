@@ -584,27 +584,9 @@ def main() -> int:
                 #
                 # 所以：先试正常保存；抛 ValueError 就整体归一、记事件、再试一次。
                 # 还是不行才往外抛（那是真坏了，交给 supervisor）。
-                try:
-                    persist.snapshot_all({"l5": stream})
-                except ValueError as _save_err:
-                    from src.L5_cognition.reorigin import (
-                        center_vector as _center,
-                        max_component as _maxcomp,
-                        shift_origin as _shift,
-                    )
-                    _mb = _maxcomp(stream)
-                    _mv = _shift(stream, _center(stream))
-                    _ma = _maxcomp(stream)
-                    observer.event("reorigin_persist", {
-                        "reason": str(_save_err)[:160],
-                        "before": float(_mb),
-                        "after": float(_ma),
-                        "vec_norm": float(_mv["vec_norm"]),
-                        "moved": int(_mv["moved"]),
-                    })
-                    print(f"[P2] 保存撞上限（{_save_err}）→ 自我归一 "
-                          f"{_mb:,.0f} -> {_ma:,.0f}，重试保存", flush=True)
-                    persist.snapshot_all({"l5": stream})
+                # 2026-11-19 上午：把这段抽成 `save_with_self_heal()`（模块级），
+                # 因为「内联在 P2 主循环里」等于「永远不会被单独验证」。
+                save_with_self_heal(stream, observer)
                 last_persist = now
                 # 检查点已经包含了日志的全部效果，可以截断
                 journal.truncate()
@@ -617,6 +599,106 @@ def main() -> int:
         bus.stop()
         print("[P2] stopped")
     return 0
+
+
+def _prune_overflow_members(stream, limit=None):
+    """丢掉分量超过存档上限的「成员」。
+
+    2026-11-19 上午（测试抓到的）：`shift_origin` 按 `center_vector` 搬 mu/x/recent/visited，
+    也搬 members——但 **members 里可能有比 mu 远几十万倍的旧坐标**（11-17 漂移留下的），
+    搬同一个 vec 之后它们仍然超限。于是「归一 → 重试」二次失败，进程照样死。
+
+    这里只丢「分量超过上限」的那些（那本来就是坏数据），不动正常成员。
+    返回丢掉的条数。
+    """
+    from src.common.persist import SAVE_MAGNITUDE_LIMIT
+
+    cap = float(limit if limit is not None else SAVE_MAGNITUDE_LIMIT * 0.95)
+    dropped = 0
+    try:
+        attrs = stream.landscape.state_space.attractors()
+    except Exception:  # noqa: BLE001
+        return 0
+    for a in attrs:
+        members = getattr(a, "members", None)
+        if not members:
+            continue
+        keep = []
+        for m in members:
+            try:
+                v = float(abs(m).max()) if hasattr(m, "max") else 0.0
+            except Exception:  # noqa: BLE001
+                v = 0.0
+            if v > cap:
+                dropped += 1
+            else:
+                keep.append(m)
+        if dropped and len(keep) != len(members):
+            try:
+                a.members = type(members)(keep, maxlen=getattr(members, "maxlen", 64))
+                a._sigma_cache = None
+            except Exception:  # noqa: BLE001
+                pass
+    return dropped
+
+
+def save_with_self_heal(stream, observer=None):
+    """保存；撞数值上限时**整体归一、记事件、重试**；还不行就**丢超限成员**再试。
+
+    为什么要有它：153 次崩溃里 52 次是「质心 > 1e6」——她走远了、坐标过界、
+    定期存档拒写、进程退出、外面拉起来。她是被「保存不了」弄死的，而「坐标太大」
+    可以用一次整体平移解决（她的动力学只用距离）。
+
+    2026-11-19：从 P2 主循环里抽出来，**就是为了能被测试**。
+    内联在主循环里的代码等于永远不被单独验证。
+
+    返回 (shifted, info)：
+        shifted=False 表示一次就存上了；
+        shifted=True  表示撞过上限、处理过，info 里有 before/after/moved/pruned。
+    三步都救不回来才往外抛（那是真坏了，交给 supervisor）。
+    """
+    from src.L5_cognition.reorigin import (
+        center_vector as _center,
+        max_component as _maxcomp,
+        shift_origin as _shift,
+    )
+
+    try:
+        persist.snapshot_all({"l5": stream})
+        return False, None
+    except ValueError as _save_err:
+        _mb = _maxcomp(stream)
+        _mv = _shift(stream, _center(stream))
+        _ma = _maxcomp(stream)
+        info = {
+            "reason": str(_save_err)[:160],
+            "before": float(_mb),
+            "after": float(_ma),
+            "vec_norm": float(_mv["vec_norm"]),
+            "moved": int(_mv["moved"]),
+            "pruned": 0,
+        }
+        if observer is not None:
+            observer.event("reorigin_persist", info)
+        print(f"[P2] 保存撞上限（{_save_err}）→ 自我归一 "
+              f"{_mb:,.0f} -> {_ma:,.0f}，重试保存", flush=True)
+        try:
+            persist.snapshot_all({"l5": stream})
+            return True, info
+        except ValueError as _save_err2:
+            # 归一后还超：members 里有比 mu 远得多的旧坐标，搬同一个 vec 救不回来。
+            _pruned = _prune_overflow_members(stream)
+            info["pruned"] = int(_pruned)
+            info["reason2"] = str(_save_err2)[:160]
+            if observer is not None:
+                observer.event("members_pruned_on_save", {
+                    "pruned": int(_pruned),
+                    "reason": str(_save_err2)[:160],
+                })
+            print(f"[P2] 归一后还超（{_save_err2}）→ 丢 {_pruned} 个超限成员，再试保存",
+                  flush=True)
+            persist.snapshot_all({"l5": stream})
+            return True, info
 
 
 # 同一个错误连续出现这么多次，说明它不是瞬态（端口占用、配置错、缺文件），
