@@ -238,9 +238,13 @@ class Stream:
         # 这条是「耗尽」：E 从 1 开始，每步掉一点，掉到 0 她就不再有能量。
         # 现在只记录（energy），不用于判死——先看它怎么掉，再定「死不死」。
         #
-        # 参数：energy_burn = 1e-5 → 1/1e-5 = 100000 步 = 55.6 小时（2.3 天）
+        # 2026-11-21 00:10：白默定「一直活，电子幽灵」+「能量耗尽就休眠」。
+        # 所以：① 耗电改成「活动才耗」（leave 才耗，HOLD 几乎不耗）；
+        #       ② 耗尽不是死，是休眠（asleep=True，不动，电来了/重启就醒）。
+        # 参数：活动耗 1e-6；她一天约 4000 次 leave → 一天掉 0.004 → 约 250 天耗尽。
         self.energy = 1.0
-        self.energy_burn = 1e-5
+        self.energy_burn = 1e-6
+        self.asleep = False
         self.rest = RestField()
         self._rest_every = 1
         self.swing = Swing(dim=dim)
@@ -291,6 +295,10 @@ class Stream:
         if self._st is None:
             raise RuntimeError("Stream not calibrated: no zero point, no state")
 
+        # 休眠：能量耗尽后不动（不是死；重启或补能会醒）
+        if getattr(self, "asleep", False):
+            return None
+
         # 记忆回路：可能开始一次预演，或结算上一次（都不改动她）
         self._maybe_rehearse()
 
@@ -301,8 +309,12 @@ class Stream:
         self._st = self.dynamics.step(self._st, self.landscape, self.rng)
         self._step_count += 1
 
-        # 有限性：每步掉一点（只记录，不致死）
-        self.energy = max(0.0, self.energy - self.energy_burn)
+        # 有限性（2026-11-21 夜）：活动才耗电；耗尽就休眠（不是死）
+        if not self.asleep:
+            _burn = self.energy_burn if getattr(self, "_action", None) == "leave" else self.energy_burn * 0.1
+            self.energy = max(0.0, self.energy - _burn)
+            if self.energy <= 0.0:
+                self.asleep = True
 
         # ── 存在锚（2026-11-18 09:00）────────────────────────────
         #

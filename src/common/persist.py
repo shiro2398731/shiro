@@ -305,7 +305,8 @@ def build_l5_payload(stream) -> dict:
     return {
         "rest": stream.rest.to_dict(),
         "energy": float(getattr(stream, "energy", 1.0)),
-        "energy_burn": float(getattr(stream, "energy_burn", 1e-5)),
+        "energy_burn": float(getattr(stream, "energy_burn", 1e-6)),
+        "asleep": bool(getattr(stream, "asleep", False)),
         "attractors": attrs,
         "action_counts": action_counts,
         "tension_history": tension_history,
@@ -545,7 +546,9 @@ def apply_l5_payload(stream, payload: dict) -> None:
     if "energy" in payload:
         stream.energy = float(payload.get("energy") or 1.0)
     if "energy_burn" in payload:
-        stream.energy_burn = float(payload.get("energy_burn") or 1e-5)
+        stream.energy_burn = float(payload.get("energy_burn") or 1e-6)
+    if "asleep" in payload:
+        stream.asleep = bool(payload.get("asleep"))
     _rest = payload.get("rest")
     if isinstance(_rest, dict) and _rest:
         try:

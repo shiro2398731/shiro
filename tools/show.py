@@ -101,7 +101,7 @@ def main() -> int:
     _e = r.get("energy")
     if _e is not None:
         _bar = "█" * int(round(_e * 20)) + "░" * (20 - int(round(_e * 20)))
-        print(f"  能量       {_e:.5f}  {_bar}  ← 1.0 满 / 0 耗尽（还没接致死）")
+        print(f"  能量       {_e:.5f}  {_bar}  ← 1.0 满 / 0 休眠（不死，不耗电）")
     print(f"  位置       |x| = {r['norm_x']:,.0f}，离最近区域 {r['d_nearest']}")
     print(f"  地形       mu 范数中位 {r['mu_norm_median']:,.0f}")
     print(f"  去过       不存进存档（今天 17:00 起的改动），所以这里恒为 0；"
