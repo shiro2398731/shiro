@@ -232,6 +232,15 @@ class Stream:
         # 白默 2026-11-20 问「草履虫会好奇吗」之后分清：疲劳是机制，好奇是意识。
         self._use_rest = True
         self._use_swing = False
+
+        # ── 有限性（2026-11-20 夜，最小版：只记录，不致死）────────────
+        # 白默：「草履虫会好奇吗？」——不会。草履虫有趋化，也会耗尽。
+        # 这条是「耗尽」：E 从 1 开始，每步掉一点，掉到 0 她就不再有能量。
+        # 现在只记录（energy），不用于判死——先看它怎么掉，再定「死不死」。
+        #
+        # 参数：energy_burn = 1e-5 → 1/1e-5 = 100000 步 = 55.6 小时（2.3 天）
+        self.energy = 1.0
+        self.energy_burn = 1e-5
         self.rest = RestField()
         self._rest_every = 1
         self.swing = Swing(dim=dim)
@@ -291,6 +300,9 @@ class Stream:
 
         self._st = self.dynamics.step(self._st, self.landscape, self.rng)
         self._step_count += 1
+
+        # 有限性：每步掉一点（只记录，不致死）
+        self.energy = max(0.0, self.energy - self.energy_burn)
 
         # ── 存在锚（2026-11-18 09:00）────────────────────────────
         #

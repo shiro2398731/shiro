@@ -304,6 +304,8 @@ def build_l5_payload(stream) -> dict:
     ]
     return {
         "rest": stream.rest.to_dict(),
+        "energy": float(getattr(stream, "energy", 1.0)),
+        "energy_burn": float(getattr(stream, "energy_burn", 1e-5)),
         "attractors": attrs,
         "action_counts": action_counts,
         "tension_history": tension_history,
@@ -540,6 +542,10 @@ def apply_l5_payload(stream, payload: dict) -> None:
     ls = stream.landscape
     # 2026-11-20 夜：rest（疲劳场）的存档恢复。rest 是「趋性」机制（待久了的区域深度变淡），
     # 不存的话重启后疲劳清零——和 action_counts 当年同一个坑（见下面那段注释）。
+    if "energy" in payload:
+        stream.energy = float(payload.get("energy") or 1.0)
+    if "energy_burn" in payload:
+        stream.energy_burn = float(payload.get("energy_burn") or 1e-5)
     _rest = payload.get("rest")
     if isinstance(_rest, dict) and _rest:
         try:

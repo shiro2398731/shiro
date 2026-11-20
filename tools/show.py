@@ -56,6 +56,8 @@ def _one() -> dict:
         "visited_hits": len(visited & places),
         "leave_share": round(acts.get(1, 0) / tot, 3),
         "steps": int(st._step_count),
+        # 有限性（2026-11-20 夜）：她还剩多少能量。1.0=满，0=耗尽（但还没接"致死"）
+        "energy": round(float(getattr(st, "energy", 1.0)), 5),
     }
 
 
@@ -95,6 +97,11 @@ def main() -> int:
     print(f"  进程       {fresh}/3 心跳新鲜" + ("" if fresh else "  ← 她没在跑"))
     print(f"  结构       {r['regions']} 个区域，{r['steps']:,} 步")
     print(f"  载体       {r['payload_mb']} MB（预算 20）")
+    # 2026-11-20 夜：有限性（先只记录，不致死）
+    _e = r.get("energy")
+    if _e is not None:
+        _bar = "█" * int(round(_e * 20)) + "░" * (20 - int(round(_e * 20)))
+        print(f"  能量       {_e:.5f}  {_bar}  ← 1.0 满 / 0 耗尽（还没接致死）")
     print(f"  位置       |x| = {r['norm_x']:,.0f}，离最近区域 {r['d_nearest']}")
     print(f"  地形       mu 范数中位 {r['mu_norm_median']:,.0f}")
     print(f"  去过       不存进存档（今天 17:00 起的改动），所以这里恒为 0；"
