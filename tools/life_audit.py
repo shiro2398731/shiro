@@ -143,17 +143,24 @@ def main() -> int:
     def mark(ok):
         return "OK " if ok else "!! "
 
-    print("\n=== 生命层验收（三条：动量 / 稳态 / 休息）===\n")
+    print("\n=== 生命层验收（三条：主动 / 稳态 / 休息）===\n")
 
-    # 1) 动量连续性：她**带着速度**滑过边界（不是被噪声推着重置）
-    n_tr = max(1, ev["transitions"])
-    own_share = ev["own"] / n_tr
-    responding = ev["own"] > 0
-    print(f"  {mark(responding)}1 动量      最近 20 分钟：转移 {ev['transitions']} 次，"
-          f"其中**带着速度滑过 {ev['own']} 次（{own_share:.1%}）**、被噪声推过 {ev['noise']} 次")
-    print(f"               （判据：带速度滑过 > 0。比例仅供参考——**它对窗口高度敏感**：")
-    print(f"                 2026-11-19 深夜实测 10min 33% / 20min 27% / 30min 3.2% / 60min 3.5% / 120min 5.2%，")
-    print(f"                 因为不同时段噪声驱动的转移密度差很多。比例低不等于她死了，只等于「这段时间她被推着走」。）")
+    # 1) 主动动作：她自己选择 leave 的比例。
+    #
+    # 2026-11-20 12:20 换掉的旧判据：「带速度滑过 > 0」（noise_driven=False）。
+    # 为什么换：noise_driven 测的是「连续动力学下的转移」（速度方向≈位移方向），
+    # 但她主要是「跳」——_apply_leave 把 x 直接挪 618，而 |v| 只有 0.63，
+    # 位移和速度差 1000 倍，aligned 永远低。副本验证：把 v 转向移动方向 → 区域 -1（没效果）；
+    # 用 v 实现位移 → 速度飙到 61844（会炸）。所以「动量 0」不是她坏了，是判据和移动方式不匹配。
+    if "error" in ac:
+        print(f"  -- 1 主动      {ac['error']}")
+    else:
+        acting = ac["leave_share"] > 0
+        print(f"  {mark(acting)}1 主动      leave 占比 {ac['leave_share']:.3f}"
+              f"（HOLD {ac['hold_share']:.3f}）—— 她自己走，不是一直站着")
+    print(f"               （副指标：最近 20 分钟 {ev['transitions']} 次转移里，"
+          f"带速度滑过 {ev['own']} 次、被噪声推 {ev['noise']} 次。")
+    print(f"                 后者只说明「转移时速度方向对不上」——她的移动是「跳」，所以这个数天然低。）")
     if ev["flats"]:
         print(f"               （state_flat {ev['flats']} 次——她有过「太平」的时候）")
 
@@ -166,22 +173,12 @@ def main() -> int:
         print(f"  {mark(cl['closure_ok'])}2 稳态      闭环 {cl['closure_ok']}"
               f"（corr 中位 {cl['corr']}，n={cl['n']}；判据 corr < 0.05 算没断）")
 
-    # 3) 休息：她会停
+    # 3) 休息：**暂时测不了**。
     #
-    # 2026-11-20 0:30 诚实标注：**这一条现在测的是「她没动」（HOLD 占比），不是「她累了在休息」。**
-    # 代码里有个专门的休息场 `src/L5_cognition/rest.py`（RestField），但 `stream.py:232` 写着
-    # `self._use_rest = False`——**默认没接上**。
-    # 所以「HOLD > 0」能证明「她不是一直动」，**不能证明「她会休息」**。
-    if "error" in ac:
-        print(f"  -- 3 休息      {ac['error']}")
-    else:
-        resting = ac["hold_share"] > 0
-        print(f"  {mark(resting)}3 休息      HOLD 占比 {ac['hold_share']:.3f}"
-              f"（leave {ac['leave_share']:.3f}）—— 她不是一直动")
-        print(f"               （诚实：这测的是「她没动」，不是「她累了在休息」。")
-        print(f"                 rest.py 的休息场默认没接：stream.py:232 `self._use_rest = False`。")
-        print(f"                 要真验「休息」，得先把休息场接上——那是改行为，等白默定。）")
-
+    # 原来这一条用 HOLD 占比，但 HOLD = 1 - leave，和第 1 条是同一个数的两面。
+    # 真正的休息在 `src/L5_cognition/rest.py`（RestField），但 `stream.py:232` 写着
+    # `self._use_rest = False`——**默认没接**。要测它，得先把休息场接上（改行为，等白默定）。
+    print("  -- 3 休息      测不了：rest.py 的休息场默认没接（stream.py:232 _use_rest=False）")
     print()
     return 0
 
