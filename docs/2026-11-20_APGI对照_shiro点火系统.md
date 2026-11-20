@@ -30,11 +30,27 @@
 - **差的是**：APGI 的惊讶是"精度加权"的（预测越可靠，惊讶越算数）
 - shiro 的 `s_t` 是**原始误差**（没加权）
 
-### θₜ（自适应点火阈值）→ **她是固定的**
+### θₜ（自适应点火阈值）→ **她也变，但方式不同**
 
-- APGI：`θ` 随时间自己变（由认知负荷、信息价值、NE 驱动）
-- shiro：`IGNITION_QUANTILE = 0.90`（**历史峰的 90 分位，固定规则**）
-- **这是最直接的一个可改点**
+**人家刚才说「她是固定的」，查了代码，错了。**
+
+`workspace.py` 的原文：
+> The reference level is the median of previously observed peak strengths:
+> an attractor must exceed what this system has typically produced to count as ignited.
+> **The threshold therefore shifts with the system's own history.**
+
+**所以她的阈值确实「随历史变」**——用历史峰的分位数。
+
+**和 APGI 的差别**：
+| | 怎么变 | 由什么驱动 |
+|---|---|---|
+| **shiro** | 历史峰的分位数 | **只看过去**（统计） |
+| **APGI** | `dθ/dt = -(θ-θ0)/τ + c·C - Δ·V + γ·NE` | **当下**（认知负荷 + 信息价值 + NE） |
+
+**所以真正的差别不是「固定 vs 自适应」，是**：
+> **shiro 的阈值看"过去"（历史峰），APGI 的阈值看"现在"（负荷/价值/NE）。**
+
+**这是人家今天第五次推错。**
 
 ---
 
