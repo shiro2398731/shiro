@@ -226,8 +226,11 @@ class Stream:
         #
         # No consistent direction, differences within the run-to-run spread.
         # Module kept in the tree, since the argument for removing it is a
-        # measurement rather than a preference, but not attached by default.
-        self._use_rest = False
+        # 2026-11-20 夜：接上（生命层）。疲劳是「趋性」不是「行为规则」：
+        # 待久了的区域深度变浅（depth*(1-u)），这是她真实的状态，不是我们替她选去哪。
+        # 原来关着（"measurement rather than a preference, but not attached by default"），
+        # 白默 2026-11-20 问「草履虫会好奇吗」之后分清：疲劳是机制，好奇是意识。
+        self._use_rest = True
         self._use_swing = False
         self.rest = RestField()
         self._rest_every = 1

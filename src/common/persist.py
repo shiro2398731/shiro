@@ -303,6 +303,7 @@ def build_l5_payload(stream) -> dict:
         for a in ls.state_space.attractors()
     ]
     return {
+        "rest": stream.rest.to_dict(),
         "attractors": attrs,
         "action_counts": action_counts,
         "tension_history": tension_history,
@@ -537,6 +538,15 @@ def apply_l5_payload(stream, payload: dict) -> None:
     from src.L5_cognition.terrain import Attractor
     from src.L5_cognition.dynamics import DynamicState
     ls = stream.landscape
+    # 2026-11-20 夜：rest（疲劳场）的存档恢复。rest 是「趋性」机制（待久了的区域深度变淡），
+    # 不存的话重启后疲劳清零——和 action_counts 当年同一个坑（见下面那段注释）。
+    _rest = payload.get("rest")
+    if isinstance(_rest, dict) and _rest:
+        try:
+            from src.L5_cognition.rest import RestField as _RestField
+            stream.rest = _RestField.from_dict(_rest)
+        except Exception as _e:  # noqa: BLE001
+            print(f"[persist] rest 恢复失败（继续）：{_e}")
     # 2026-11-17：她做过多少次「留下」和「离开」。原来没存，每次重启都归零，
     # 于是 `vitals` 算出来的 leave_rate 永远是 0——今晚查了半天才发现不是她没动，
     # 是这个数根本没被存下来。旧存档没有这个键时保持构造时的默认值（全零）。
