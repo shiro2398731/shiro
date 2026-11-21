@@ -835,14 +835,14 @@ class Stream:
         except Exception:  # noqa: BLE001
             pass
 
-        # 2026-11-19 21:30：记「最近几次到达了哪些地方」（位置键，不是 uid）。
-        # 最近 6 次里只有 <= 2 个不同地方 -> 她在打转 -> 下一步挑最远可达（prefer_far）。
+        # 2026-11-21 23:20：改成 uid（和 _visited_places 一致），并且能存档。
+        # 原来存的是位置 tuple（`tuple(round(mu,4))`）——和 visited 一样的老问题：
+        # 位置会漂、和现状对不上；而且存档时 int(tuple) 直接崩（今晚 23:07 崩了 4 次）。
+        # uid 是稳定的区域身份：存得住、比得上是、也不会崩。
         try:
             _arr = getattr(self.detector, "current_attractor", None)
-            _row = None if _arr is None else space.uid_row().get(int(_arr))
-            if _row is not None:
-                _a = tuple(np.round(np.asarray(space.attractors()[_row].mu, dtype=float), 4).tolist())
-                self._arrival_hist.append(_a)
+            if _arr is not None:
+                self._arrival_hist.append(int(_arr))
         except Exception:  # noqa: BLE001
             pass
 
