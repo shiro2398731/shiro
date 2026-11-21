@@ -266,6 +266,12 @@ class Stream:
         # 区域多 → 每个区域记浅一点（地方多，摊薄）。
         # density 是她自己的量（n_attractors / max_attractors），不是我们给的。
         self.assign_ratio_state = 0.05
+
+        # ── 独立自立（2026-11-21 12:30，第三版）────────────────────
+        # 「多快待腻」（fatigue_rate）也不该是常数 0.02。
+        # 该由她的「停留时长」定：她在这个地方待得越久，疲劳涨得越快（越快待腻）。
+        # 用 _dwell_history 的中位（她自己待过多久），不是我们定的数。
+        self.fatigue_rate_state = 0.02
         self.rest = RestField()
         self._rest_every = 1
         self.swing = Swing(dim=dim)
@@ -348,6 +354,16 @@ class Stream:
             _ar_target = 0.05 * (1.6 - _density)      # density 0 -> 0.080；1 -> 0.030
             self.assign_ratio_state = self.assign_ratio_state * 0.95 + _ar_target * 0.05
             _sp.assign_ratio = self.assign_ratio_state
+
+            # 多快待腻：由她的停留时长定（待得久 → 疲劳快 → 更快走）
+            _dh = getattr(self, "_dwell_history", None)
+            if _dh and len(_dh) >= 3:
+                _vals = sorted(int(v) for v in _dh)
+                _dwell_med = _vals[len(_vals) // 2]
+                _ft_target = 0.02 * (1.0 + _dwell_med / 100.0)   # 待 100 步 → 翻倍
+                self.fatigue_rate_state = self.fatigue_rate_state * 0.95 + _ft_target * 0.05
+                if hasattr(self, "rest"):
+                    self.rest.fatigue_rate = self.fatigue_rate_state
 
         # 有限性（2026-11-21 夜）：活动才耗电；耗尽就休眠（不是死）
         # 代谢（2026-11-21 11:50）：每步补充（电脑开着 = 有电），封顶 1.0
