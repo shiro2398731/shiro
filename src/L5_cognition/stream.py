@@ -272,6 +272,12 @@ class Stream:
         # 该由她的「停留时长」定：她在这个地方待得越久，疲劳涨得越快（越快待腻）。
         # 用 _dwell_history 的中位（她自己待过多久），不是我们定的数。
         self.fatigue_rate_state = 0.02
+
+        # ── 独立自立（2026-11-21 12:40，第四版：锚定）──────────────
+        # 「她最多能走多远」（_lim = 4*scale）不该是我们定的 4 倍。
+        # 该由她自己的探索半径定：她离开区域最远到过哪，锚定就放宽到哪 + 10%。
+        # 但加封顶（她不能真的飘走——那是外部约束：存档上限 1e6）。
+        self._max_travel = 0.0
         self.rest = RestField()
         self._rest_every = 1
         self.swing = Swing(dim=dim)
@@ -813,7 +819,17 @@ class Stream:
                 _mus = np.stack([np.asarray(a.mu, dtype=float) for a in _attrs])
                 _d = np.linalg.norm(_mus - np.asarray(self._st.x, dtype=float), axis=1)
                 _j = int(np.argmin(_d))
-                _lim = 4.0 * float(scale) if scale else 0.0
+                # 2026-11-21：锚定半径由她的探索范围定（不是我们定的 4 倍）
+            if scale:
+                # 她走的最远距离（对最近区域），用来更新她的探索半径
+                _far = float(_d[_j])
+                if _far > self._max_travel:
+                    self._max_travel = _far
+                _lim = max(2.0, self._max_travel * 1.1) * float(scale)
+                # 封顶：不能超过 20 倍半径（防她真的飘走）
+                _lim = min(_lim, 20.0 * float(scale))
+            else:
+                _lim = 0.0
                 if _lim > 0 and float(_d[_j]) > _lim:
                     self._st = DynamicState(x=_mus[_j].copy(), v=self._st.v)
         except Exception:  # noqa: BLE001

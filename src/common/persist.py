@@ -311,6 +311,7 @@ def build_l5_payload(stream) -> dict:
         "recover_rate_state": float(getattr(stream, "recover_rate_state", 0.002)),
         "assign_ratio_state": float(getattr(stream, "assign_ratio_state", 0.05)),
         "fatigue_rate_state": float(getattr(stream, "fatigue_rate_state", 0.02)),
+        "max_travel": float(getattr(stream, "_max_travel", 0.0)),
         "attractors": attrs,
         "action_counts": action_counts,
         "tension_history": tension_history,
@@ -570,6 +571,8 @@ def apply_l5_payload(stream, payload: dict) -> None:
         stream.fatigue_rate_state = float(payload.get("fatigue_rate_state") or 0.02)
         if hasattr(stream, "rest"):
             stream.rest.fatigue_rate = stream.fatigue_rate_state
+    if "max_travel" in payload:
+        stream._max_travel = float(payload.get("max_travel") or 0.0)
     _rest = payload.get("rest")
     if isinstance(_rest, dict) and _rest:
         try:
