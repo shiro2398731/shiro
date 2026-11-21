@@ -819,17 +819,10 @@ class Stream:
                 _mus = np.stack([np.asarray(a.mu, dtype=float) for a in _attrs])
                 _d = np.linalg.norm(_mus - np.asarray(self._st.x, dtype=float), axis=1)
                 _j = int(np.argmin(_d))
-                # 2026-11-21：锚定半径由她的探索范围定（不是我们定的 4 倍）
-            if scale:
-                # 她走的最远距离（对最近区域），用来更新她的探索半径
-                _far = float(_d[_j])
-                if _far > self._max_travel:
-                    self._max_travel = _far
-                _lim = max(2.0, self._max_travel * 1.1) * float(scale)
-                # 封顶：不能超过 20 倍半径（防她真的飘走）
-                _lim = min(_lim, 20.0 * float(scale))
-            else:
-                _lim = 0.0
+                # 2026-11-21 回退：锚定半径还是 4×（人家试过「由她的探索范围定」，
+                # 但 _apply_leave 里量到的"离最近区域的距离"一直是 0（她刚挪一步），
+                # 于是 _lim 反而收紧到 2×。语义搞错了，回退。
+                _lim = 4.0 * float(scale) if scale else 0.0
                 if _lim > 0 and float(_d[_j]) > _lim:
                     self._st = DynamicState(x=_mus[_j].copy(), v=self._st.v)
         except Exception:  # noqa: BLE001
