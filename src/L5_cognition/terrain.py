@@ -252,6 +252,14 @@ class Attractor:
         """Assign one state to this attractor and update the centroid."""
         self.members.append(x.copy())
         self._assigned += 1
+        # 2026-11-21 22:35：参数局部化（Flow-Lenia 2212.07906 的 dynamic and localized）。
+        # _decay_factor 原来是「出生时随机定，之后不变」（terrain.py:132 写着 fixed at birth）。
+        # 现在改成「随这个区域自己的访问历史变」——这是她自己的局部参数，不是我们拧的全局旋钮：
+        #   常被分配（她常来）   -> 因子小 -> 恢复慢 -> 记住
+        #   从没被分配（她不来） -> 因子大 -> 恢复快 -> 忘掉
+        # 用 _assigned（累积分配次数，无上限）而不是 len(members)（缓冲只有 64，会饱和）。
+        # 没有公式系数：1/(1+n) 里唯一的数 1 是「一次访问 = 一倍基础速率」的单位换算。
+        self._decay_factor = 1.0 / (1.0 + float(self._assigned))
         # The centroid is the mean of the buffered members, not of all
         # assignments; the buffer is what defines this region's current shape.
         n = len(self.members)
