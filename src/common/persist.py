@@ -322,7 +322,9 @@ def build_l5_payload(stream) -> dict:
         # 2026-11-21 23:00：arrival_hist 存档。它是 deque(maxlen=6)（6 个 int），很小，
         # 但决定 prefer_far（「她去过 ≤ 3 个不同地方」时才会挑最远的目标——破环用）。
         # 不存的话，每次重启她都要从头积累，破环能力归零。
-        "arrival_hist": [int(v) for v in getattr(stream, "_arrival_hist", ())][-6:],
+        # 2026-11-21 22:55：跳过旧存档里的 tuple（同 visited_places 的理由）。
+        "arrival_hist": [int(v) for v in getattr(stream, "_arrival_hist", ())
+                         if isinstance(v, (int, float))][-6:],
 
         "attractors": attrs,
         "action_counts": action_counts,
