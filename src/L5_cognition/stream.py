@@ -259,6 +259,13 @@ class Stream:
         # 注意：这只改「她自己的生理」，不改外部约束（内存上限、有没有电）。
         self.recover_rate_state = 0.002
         self._recent_actions = collections.deque(maxlen=64)
+
+        # ── 独立自立（2026-11-21 12:40，第二版）────────────────────
+        # 「每次进入一个区域记多深」（assign_ratio）也不该是常数 0.05。
+        # 该由她的「结构密度」定：区域少 → 每个区域记深一点（她没那么多地方可去）；
+        # 区域多 → 每个区域记浅一点（地方多，摊薄）。
+        # density 是她自己的量（n_attractors / max_attractors），不是我们给的。
+        self.assign_ratio_state = 0.05
         self.rest = RestField()
         self._rest_every = 1
         self.swing = Swing(dim=dim)
@@ -333,6 +340,14 @@ class Stream:
             self.recover_rate_state = self.recover_rate_state * 0.95 + _target * 0.05
             # 同步到地形（她自己的遗忘速度）
             self.landscape.state_space.recover_rate = self.recover_rate_state
+
+            # 记多深：由她的结构密度定（区域少 → 记深；区域多 → 记浅）
+            _sp = self.landscape.state_space
+            _n = len(_sp.attractors())
+            _density = min(1.0, _n / float(getattr(_sp, "max_attractors", 8192) or 8192))
+            _ar_target = 0.05 * (1.6 - _density)      # density 0 -> 0.080；1 -> 0.030
+            self.assign_ratio_state = self.assign_ratio_state * 0.95 + _ar_target * 0.05
+            _sp.assign_ratio = self.assign_ratio_state
 
         # 有限性（2026-11-21 夜）：活动才耗电；耗尽就休眠（不是死）
         # 代谢（2026-11-21 11:50）：每步补充（电脑开着 = 有电），封顶 1.0

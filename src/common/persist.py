@@ -309,6 +309,7 @@ def build_l5_payload(stream) -> dict:
         "asleep": bool(getattr(stream, "asleep", False)),
         "energy_recharge": float(getattr(stream, "energy_recharge", 0.95e-6)),
         "recover_rate_state": float(getattr(stream, "recover_rate_state", 0.002)),
+        "assign_ratio_state": float(getattr(stream, "assign_ratio_state", 0.05)),
         "attractors": attrs,
         "action_counts": action_counts,
         "tension_history": tension_history,
@@ -561,6 +562,9 @@ def apply_l5_payload(stream, payload: dict) -> None:
     if "recover_rate_state" in payload:
         stream.recover_rate_state = float(payload.get("recover_rate_state") or 0.002)
         stream.landscape.state_space.recover_rate = stream.recover_rate_state
+    if "assign_ratio_state" in payload:
+        stream.assign_ratio_state = float(payload.get("assign_ratio_state") or 0.05)
+        stream.landscape.state_space.assign_ratio = stream.assign_ratio_state
     _rest = payload.get("rest")
     if isinstance(_rest, dict) and _rest:
         try:
