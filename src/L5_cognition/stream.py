@@ -782,9 +782,13 @@ class Stream:
             # 但 `test_uid.py::test_consistent_relabelling_changes_nothing` 红了：
             # **把区域重新编号之后她的轨迹变了**——那就违背了「uid 只是名字，不参与决策」。
             # 所以回滚。破环靠的是 action.py 的门槛（dist >= s/2），那里只用距离，不碰 uid。
-            places = [tuple(np.round(np.asarray(attrs[i].mu, dtype=float), 4).tolist())
-                      for i in idx]
-            self._visited_places.add(tuple(np.round(np.asarray(attrs[row].mu, dtype=float), 4).tolist()))
+            # 2026-11-21 21:20：**「去过」从位置键改成 uid 键**。
+            # 位置键的问题（persist.py:266-278 的实测）：存下来的位置和现在的质心交集 0，
+            # 3868 个位置、4.67 MB、命中率 0——她「以为」所有区域都没去过，于是永远选最近的
+            # 两个（卡住）。区域有稳定 uid（Attractor.uid），用它当「去过」的键：
+            # 存得住、对得上、也不会因为质心漂移而失效。
+            places = [int(getattr(attrs[i], "uid", i)) for i in idx]
+            self._visited_places.add(int(getattr(attrs[row], "uid", row)))
 
         # 2026-11-17 23:05：她「去过哪些」——这就是「探索」策略的凭据。
         d = self.actions.direction(self._st.x, attrs[row].mu, scale,
@@ -793,10 +797,13 @@ class Stream:
                                    prefer_far=(len(set(self._arrival_hist)) <= 3 and len(self._arrival_hist) >= 4))
         if d is not None:
             self._st = DynamicState(x=self._st.x + d, v=self._st.v)
-            # 记「她到过这个位置」，不是「她到过这个 uid」
+            # 2026-11-21 21:20：到达后记「她到过的区域 uid」（不是位置）。
+            # 她落在哪个区域，就记哪个的 uid；落在空地（没归属）时不记——
+            # 「去过一片空地」不是「去过一个区域」。
             try:
-                _here = tuple(np.round(np.asarray(self._st.x, dtype=float), 4).tolist())
-                self._visited_places.add(_here)
+                _here_node = self.detector.current_attractor
+                if _here_node is not None:
+                    self._visited_places.add(int(_here_node))
             except Exception:  # noqa: BLE001
                 pass
 

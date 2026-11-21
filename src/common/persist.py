@@ -263,7 +263,9 @@ def build_l5_payload(stream) -> dict:
     # 重启后第一次「离开」会找不到行、直接返回（等于第一步不能动）。
     _cur = getattr(getattr(stream, "detector", None), "current_attractor", None)
     current_region = None if _cur is None else int(_cur)
-    # 2026-11-18 下午：**先不存 visited_places**。
+    # 2026-11-21 21:20：**现在存了**——「去过」从位置键改成了 uid 键（见 stream._apply_leave）。
+    # 位置键时代（2026-11-18 14:20 实测）：3868 个位置、4.67 MB、命中率 0（交集 0），
+    # 她是被自己的日记压瘦的。uid 键是有界的（最多 = 区域数）、可靠的（区域有稳定身份）。
     #
     # 09:35 把它加进存档时，注释写的是「她走过的通常只有几十到几百个，不大」。
     # 实测（14:20）：**3868 个，4.67 MB，是整个载体 19.69 MB 的 23.2%**。
@@ -276,7 +278,12 @@ def build_l5_payload(stream) -> dict:
     #
     # 不存它不改变她的行为：命中率本来就是 0，load 回来也是 0 命中。
     # 等「去过」的记账改成有界的区域 uid 之后，再决定存什么。
-    visited_places = []
+    # uid 键：有界（<= 区域数）、可靠（区域身份稳定）
+    try:
+        visited_places = [int(v) for v in getattr(stream, "_visited_places", set())
+                          if isinstance(v, int)]
+    except Exception:  # noqa: BLE001
+        visited_places = []
     attrs = [
         {
             "mu": a.mu, "amp": a.amp,
@@ -596,8 +603,15 @@ def apply_l5_payload(stream, payload: dict) -> None:
     _vp = payload.get("visited_places")
     if isinstance(_vp, (list, tuple)) and _vp:
         try:
-            stream._visited_places = {tuple(float(v) for v in p_) for p_ in _vp
-                                      if isinstance(p_, (list, tuple))}
+            # 2026-11-21 21:20：现在是区域 uid（int），不是位置 tuple。
+            # 旧存档里是 tuple（位置键），那时就按位置恢复——两种都认。
+            _restored = set()
+            for _p in _vp:
+                if isinstance(_p, (int, float)):
+                    _restored.add(int(_p))
+                elif isinstance(_p, (list, tuple)):
+                    _restored.add(tuple(float(v) for v in _p))
+            stream._visited_places = _restored
         except Exception:  # noqa: BLE001
             pass
     if "current_region" in payload:
