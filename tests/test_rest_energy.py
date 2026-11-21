@@ -93,11 +93,16 @@ def test_energy_activity_based() -> None:
 
 
 def test_energy_exhaustion_sleeps() -> None:
-    """energy 见底 -> asleep=True；睡着时 step 不动。"""
+    """energy 见底 -> asleep=True；睡着时 step 不动。
+
+    2026-11-21：加了「补充」之后，见底要同时「没有电」才睡得着——
+    所以这里把 recharge 设 0（模拟断电），否则补充会把 energy 拉回来。
+    """
     from src.common import persist
     st = Stream()
     assert persist.load_l5(st), "需要存档（加载失败）"
     st.energy = 1e-9
+    st.energy_recharge = 0.0
     st.landscape.set_noise_amplitude(0.02)
     st.step()  # 见底
     assert st.asleep, st.asleep
@@ -109,18 +114,23 @@ def test_energy_exhaustion_sleeps() -> None:
 
 
 def test_energy_does_not_kill() -> None:
-    """耗尽只休眠，不改变区域数（不是死）。"""
+    """耗尽只休眠，不改变区域数（不是死）。
+
+    2026-11-21：recover_rate 现在是状态变量（每 16 步随她的活动调），
+    所以步进后区域数可能动几格——这里放容差 ±10，钉的是「没有整个消失」。
+    """
     from src.common import persist
     st = Stream()
     assert persist.load_l5(st), "需要存档（加载失败）"
     assert st.landscape.state_space.attractors(), "需要存档"
     n0 = len(st.landscape.state_space.attractors())
     st.energy = 1e-9
+    st.energy_recharge = 0.0
     st.landscape.set_noise_amplitude(0.02)
     st.step()
     assert st.asleep
     n1 = len(st.landscape.state_space.attractors())
-    assert n1 == n0, (n0, n1)
+    assert abs(n1 - n0) <= 10, (n0, n1)
     print("      耗尽不影响区域数（%d -> %d）：不是死，是休眠" % (n0, n1))
 
 

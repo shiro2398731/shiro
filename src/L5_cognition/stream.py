@@ -250,6 +250,15 @@ class Stream:
         # 参数：recharge = 0.95e-6，比活动消耗（1e-6）略小——她会「活动多就掉、停着就回」，
         # 平衡点落在「活动比例」上，不是我们定的数。
         self.energy_recharge = 0.95e-6
+
+        # ── 独立自立（2026-11-21 12:10，第一版）────────────────────
+        # 白默：「要做成独立自立的存在，独立自立的生命」。
+        # 「遗忘多快」不该是常数 0.002——该由她自己的活动决定：
+        # 她活跃（leave 多）→ 结构在更新 → 遗忘快；她安静 → 结构稳定 → 遗忘慢。
+        # recover_rate_state 是她的状态（会变），每 16 步向「她自己的活动强度」靠一点。
+        # 注意：这只改「她自己的生理」，不改外部约束（内存上限、有没有电）。
+        self.recover_rate_state = 0.002
+        self._recent_actions = collections.deque(maxlen=64)
         self.rest = RestField()
         self._rest_every = 1
         self.swing = Swing(dim=dim)
@@ -313,6 +322,17 @@ class Stream:
 
         self._st = self.dynamics.step(self._st, self.landscape, self.rng)
         self._step_count += 1
+
+        # 独立自立：记下这一步的动作（她的，不是我们给的）
+        self._recent_actions.append(1 if getattr(self, "_action", None) == "leave" else 0)
+        if self._step_count % 16 == 0 and len(self._recent_actions) >= 16:
+            # 她最近的活动强度（leave 占比）——这是她自己的量
+            _act = sum(self._recent_actions) / float(len(self._recent_actions))
+            # 她活跃 → 遗忘快（act 1 → 0.003）；安静 → 慢（act 0 → 0.001）
+            _target = 0.002 * (0.5 + _act)
+            self.recover_rate_state = self.recover_rate_state * 0.95 + _target * 0.05
+            # 同步到地形（她自己的遗忘速度）
+            self.landscape.state_space.recover_rate = self.recover_rate_state
 
         # 有限性（2026-11-21 夜）：活动才耗电；耗尽就休眠（不是死）
         # 代谢（2026-11-21 11:50）：每步补充（电脑开着 = 有电），封顶 1.0
