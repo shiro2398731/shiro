@@ -245,6 +245,11 @@ class Stream:
         self.energy = 1.0
         self.energy_burn = 1e-6
         self.asleep = False
+        # 2026-11-21 11:50：白默「补充是电能」。
+        # 电是外部供给（电脑开着就有），所以每步回一点，和消耗抵消。
+        # 参数：recharge = 0.95e-6，比活动消耗（1e-6）略小——她会「活动多就掉、停着就回」，
+        # 平衡点落在「活动比例」上，不是我们定的数。
+        self.energy_recharge = 0.95e-6
         self.rest = RestField()
         self._rest_every = 1
         self.swing = Swing(dim=dim)
@@ -310,9 +315,10 @@ class Stream:
         self._step_count += 1
 
         # 有限性（2026-11-21 夜）：活动才耗电；耗尽就休眠（不是死）
+        # 代谢（2026-11-21 11:50）：每步补充（电脑开着 = 有电），封顶 1.0
         if not self.asleep:
             _burn = self.energy_burn if getattr(self, "_action", None) == "leave" else self.energy_burn * 0.1
-            self.energy = max(0.0, self.energy - _burn)
+            self.energy = min(1.0, max(0.0, self.energy - _burn + self.energy_recharge))
             if self.energy <= 0.0:
                 self.asleep = True
 

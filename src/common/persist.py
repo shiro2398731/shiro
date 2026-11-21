@@ -307,6 +307,7 @@ def build_l5_payload(stream) -> dict:
         "energy": float(getattr(stream, "energy", 1.0)),
         "energy_burn": float(getattr(stream, "energy_burn", 1e-6)),
         "asleep": bool(getattr(stream, "asleep", False)),
+        "energy_recharge": float(getattr(stream, "energy_recharge", 0.95e-6)),
         "attractors": attrs,
         "action_counts": action_counts,
         "tension_history": tension_history,
@@ -546,9 +547,16 @@ def apply_l5_payload(stream, payload: dict) -> None:
     if "energy" in payload:
         stream.energy = float(payload.get("energy") or 1.0)
     if "energy_burn" in payload:
-        stream.energy_burn = float(payload.get("energy_burn") or 1e-6)
+        _b = float(payload.get("energy_burn") or 1e-6)
+        # 2026-11-21：旧存档里的 1e-5 是「每步固定耗」时代的默认值；现在改成「活动才耗」的 1e-6。
+        # 旧值不兼容（会把电吃光得比补充快 10 倍），所以强制迁移。
+        if abs(_b - 1e-5) < 1e-12:
+            _b = 1e-6
+        stream.energy_burn = _b
     if "asleep" in payload:
         stream.asleep = bool(payload.get("asleep"))
+    if "energy_recharge" in payload:
+        stream.energy_recharge = float(payload.get("energy_recharge") or 0.95e-6)
     _rest = payload.get("rest")
     if isinstance(_rest, dict) and _rest:
         try:
