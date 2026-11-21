@@ -357,7 +357,7 @@ class Stream:
             _sp = self.landscape.state_space
             _n = len(_sp.attractors())
             _density = min(1.0, _n / float(getattr(_sp, "max_attractors", 8192) or 8192))
-            _ar_target = 0.03 * (1.6 - _density)      # density 0 -> 0.080；1 -> 0.030
+            _ar_target = 0.05 * (1.6 - _density)      # density 0 -> 0.080；1 -> 0.030
             self.assign_ratio_state = self.assign_ratio_state * 0.95 + _ar_target * 0.05
             _sp.assign_ratio = self.assign_ratio_state
 
