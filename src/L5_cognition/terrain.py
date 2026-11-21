@@ -302,7 +302,11 @@ class StateSpace:
         baseline        : potential at an unvisited region
         recover_rate    : base recovery rate
         max_attractors  : safety bound on memory, not a target count
-        min_amp         : depth below which an attractor is removed
+        min_amp         : FLOOR for the removal line. The actual line used is
+                          `min_amp_effective`, which is measured from the
+                          population's own amp distribution (5th percentile)
+                          whenever there are enough regions; see recover().
+                          2026-11-21: 删除线不该是我们定的 1e-3，该由她的结构定。
         ceiling         : depth capacity of a single attractor
         assign_ratio    : fraction of the remaining headroom gained per assignment
         recover_jitter  : amplitude of per-call random fluctuation in recovery
@@ -321,7 +325,8 @@ class StateSpace:
         self.baseline = float(baseline)
         self.recover_rate = float(recover_rate)
         self.max_attractors = int(max_attractors)
-        self.min_amp = float(min_amp)
+        self.min_amp = float(min_amp)          # 现在只是「下限」（保护，防删光）
+        self.min_amp_effective = float(min_amp)  # 实际用的删除线（每 recover 从她自己的分布测）
         self.ceiling = float(ceiling)
         self.assign_ratio = float(assign_ratio)
         self.recover_jitter = float(recover_jitter)
@@ -1386,6 +1391,14 @@ class StateSpace:
                     # not end up effectively frozen
                     rate_scale = half / interval
                     rate_scale = max(rate_scale, MIN_RATE_SCALE)
+
+            # 2026-11-21：删除线由她自己的 amp 分布定（5 分位），不是我们定的常数。
+            # 少于 20 个区域时样本不足，用下限。
+            if len(self._attractors) >= 20:
+                _amps = sorted(a.amp for a in self._attractors)
+                self.min_amp_effective = max(self.min_amp, _amps[len(_amps) // 100])
+            else:
+                self.min_amp_effective = self.min_amp
 
             jitter = 1.0 + self.recover_jitter * float(rng.normal(0.0, 1.0))
             jitter = max(jitter, 0.0)
