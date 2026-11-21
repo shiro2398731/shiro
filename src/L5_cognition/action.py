@@ -152,6 +152,16 @@ class ActionGate:
                     _ok = dist[np.isfinite(dist)]
                     if _ok.size >= 2:
                         reach = float(np.median(_ok))
+                        # 2026-11-21 21:20：reach 不能超过「她走得到的范围」。
+                        # 实测她的地形散在 70 万外（median 213,533），reach=median 让她「看得见、走不到」——
+                        # 她选 21 万外的目标，一步只走 585，永远到不了，只在最近的两个之间弹（卡住）。
+                        # 上限 = 10 个她自己的半径（走 10 步能到）。这是「感知和行动匹配」，不是调她的参数。
+                        reach = min(reach, 10 * s)
+                    else:
+                        reach = s
+                    _ok = dist[np.isfinite(dist)]
+                    if _ok.size >= 2:
+                        reach = float(np.median(_ok))
                     else:
                         reach = s
                     # 2026-11-19 22:10：`prefer_far` 时 reach 要放宽到「最远那个」。
