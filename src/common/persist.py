@@ -319,6 +319,11 @@ def build_l5_payload(stream) -> dict:
         "assign_ratio_state": float(getattr(stream, "assign_ratio_state", 0.05)),
         "fatigue_rate_state": float(getattr(stream, "fatigue_rate_state", 0.02)),
         "max_travel": float(getattr(stream, "_max_travel", 0.0)),
+        # 2026-11-21 23:00：arrival_hist 存档。它是 deque(maxlen=6)（6 个 int），很小，
+        # 但决定 prefer_far（「她去过 ≤ 3 个不同地方」时才会挑最远的目标——破环用）。
+        # 不存的话，每次重启她都要从头积累，破环能力归零。
+        "arrival_hist": [int(v) for v in getattr(stream, "_arrival_hist", ())][-6:],
+
         "attractors": attrs,
         "action_counts": action_counts,
         "tension_history": tension_history,
@@ -580,6 +585,13 @@ def apply_l5_payload(stream, payload: dict) -> None:
             stream.rest.fatigue_rate = stream.fatigue_rate_state
     if "max_travel" in payload:
         stream._max_travel = float(payload.get("max_travel") or 0.0)
+    if "arrival_hist" in payload:
+        try:
+            _ah = payload.get("arrival_hist") or ()
+            stream._arrival_hist = collections.deque(
+                (int(v) for v in _ah), maxlen=getattr(stream, "_arrival_hist", None).maxlen or 6)
+        except Exception:  # noqa: BLE001
+            pass
     _rest = payload.get("rest")
     if isinstance(_rest, dict) and _rest:
         try:
