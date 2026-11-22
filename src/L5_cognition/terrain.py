@@ -93,6 +93,17 @@ CARRIER_BUDGET_BYTES = 20 * 1024 * 1024
 # single step even if that would fit the budget sooner.
 FOLD_BATCH_DIVISOR = 20
 
+# 2026-11-22 17:40：白默的问题一——「载体的增量只该是演化/思考，运行本身不该让它一直涨；
+# 该预留一个阈值，像 CPU 是一个范围」。
+#
+# 实测载体 95.7% 是 members（每个成员 = 128 维 = 1 KB；每区域最多 64 个 = 65 KB）。
+# 这不是「演化」，是「记账」——所以她越跑越重、最后被 fold 压瘦。
+#
+# 现在给它一个总量预算：不管多少区域，members 的**总数**不超过这个数。
+# 超了就从「最久没访问的区域」开始清（谁不重要先清谁）。
+# 12000 个 = 12 MB（members 部分）——载体总量因此有固定上限，不会因为运行变重。
+MAX_TOTAL_MEMBERS = 12000
+
 
 def _median(a) -> float:
     """`np.median` 的等价实现，用 partition 代替整表排序。
@@ -1337,6 +1348,34 @@ class StateSpace:
             return float("inf")
         return float(np.log(0.5) / np.log(max(1.0 - r, 1e-12))) * every
 
+    def _enforce_total_members(self) -> int:
+        """2026-11-22：members 的总量预算（白默的问题一）。
+
+        超了就从「最久没访问」的区域开始清——她的结构（mu/sigma/amp）不动，
+        只清「它到过这里的坐标副本」。清的是记账，不是回忆。
+        返回清掉了多少个。
+        """
+        total = sum(len(a.members) for a in self._attractors)
+        if total <= MAX_TOTAL_MEMBERS:
+            return 0
+        excess = total - MAX_TOTAL_MEMBERS
+        removed = 0
+        for a in sorted(self._attractors,
+                        key=lambda a: int(getattr(a, "_last_seen_step", 0))):
+            if excess <= 0:
+                break
+            drop = min(len(a.members), excess)
+            for _ in range(drop):
+                try:
+                    a.members.popleft()
+                except Exception:  # noqa: BLE001
+                    break
+            excess -= drop
+            removed += drop
+            # 成员变少，sigma 缓存要作废（它按成员算）
+            a._sigma_cache = None
+        return removed
+
     def recover(self, rng: np.random.Generator | None = None) -> None:
         """
         Apply recovery to every attractor.
@@ -1420,6 +1459,9 @@ class StateSpace:
         self._apply_scale_floor()
 
     # ---------- observation of structure ----------
+
+        # 2026-11-22：每次 recover 都查一次 members 总量预算（白默的问题一）
+        self._enforce_total_members()
 
     def salient(self, threshold_ratio: float = 0.5) -> List[Attractor]:
         """

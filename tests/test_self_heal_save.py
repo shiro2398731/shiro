@@ -67,8 +67,8 @@ def test_overflow_shifts_and_saves() -> None:
         return
     # 把整片地形和她一起推过 1e6（真实场景：她走远了，区域跟着走远）
     for a in st.landscape.state_space.attractors():
-        a.mu = np.asarray(a.mu, dtype=float) + 9.0e5
-    st._st.x = np.asarray(st._st.x, dtype=float) + 9.0e5
+        a.mu = np.asarray(a.mu, dtype=float) + 1.5e6
+    st._st.x = np.asarray(st._st.x, dtype=float) + 1.5e6
     before = max_component(st)
     assert before > 1e6, before
 
