@@ -455,6 +455,11 @@ def main() -> int:
 
             # 上游还没给够数据：什么也不做，等她身体先积累统计量
             if not runner.maybe_calibrate(stream):
+                # 2026-11-20 早上：开机后她不 step，卡在这里。加一行诊断，看 feature_hist 涨不涨。
+                if not getattr(runner, "_calib_dbg_t", 0.0) or time.time() - runner._calib_dbg_t > 10.0:
+                    runner._calib_dbg_t = time.time()
+                    print(f"[P2] waiting calibrate: feature_hist={len(runner.feature_hist)}/64",
+                          flush=True)
                 continue
 
             # 噪声与偏转都由上游实测给出；她自己的预测误差只做有界缩放

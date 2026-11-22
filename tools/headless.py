@@ -96,6 +96,19 @@ def _keeper_running() -> list[int]:
 
 
 def start() -> int:
+    # 2026-11-21：先停 keeper，否则它会和本函数抢着起。
+    # 今早的现场：headless 刚起了 P2（还没心跳），keeper 看到「心跳是 9.7 小时前」就又起一套，
+    # 两套抢 5562，一套崩 5 次放弃重启（崩溃账 161→166）。
+    for pid in _keeper_running():
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                               capture_output=True)
+            else:
+                os.kill(pid, 9)
+        except Exception:                                 # noqa: BLE001
+            pass
+    time.sleep(2.0)
     already = _running()
     if already:
         print(f"[headless] already running ({len(already)} processes); stop first")
@@ -125,7 +138,11 @@ def start() -> int:
     PIDS.write_text(json.dumps(pids, indent=2), encoding="utf-8")
 
     # 守夜人最后起：它只补缺的，不参与首启。
+    # 2026-11-21：起 keeper 前要等 worker 写出心跳。keeper 的判据是「心跳超过 30 秒算不在」，
+    # 而 worker 刚起、心跳还是关机前的旧值——keeper 会把它当成「不在」，补一套，于是两套抢端口。
+    # 等 10 秒让 P1/P2/P3 各自写一次心跳（心跳周期远短于 10 秒）。
     if not _keeper_running():
+        time.sleep(10.0)
         log = (LOGS / "keeper.log").open("ab")
         kwargs = dict(cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT,
                       stdin=subprocess.DEVNULL, close_fds=True)
