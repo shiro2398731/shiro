@@ -724,24 +724,6 @@ class Stream:
             action = int(self.force_action)
         else:
             action = self.actions.choose(self._tension_now, list(self._tension_history))
-            # 2026-11-22 23:25：**把 rest 的疲劳接到「走」上**。
-            #
-            # 实测：她在 31372 待了 723 步（24 分钟），该区域的 rest u = 1.000（满疲劳），
-            # 但 tension = 0（结构均匀）-> choose 返回 HOLD -> 她不走。
-            # 「待腻了」的信号一直在产生，只是没接到「走」上。
-            #
-            # 这不是加新信号，是把已有的疲劳信号接上：
-            #   她所在的区域 u >= 1.0（满）-> 允许 LEAVE。
-            # 阈值 1.0 是 rest 自己的满值（不是我们定的数）。
-            if action == HOLD and getattr(self, "_use_rest", False):
-                try:
-                    _node = self.detector.current_attractor
-                    if _node is not None:
-                        _row = self.landscape.state_space.uid_row().get(int(_node))
-                        if _row is not None and self.rest.value(_row) >= 1.0:
-                            action = LEAVE
-                except Exception:  # noqa: BLE001
-                    pass
         self._tension_history.append(self._tension_now)
 
         self.action_counts[action] = self.action_counts.get(action, 0) + 1
