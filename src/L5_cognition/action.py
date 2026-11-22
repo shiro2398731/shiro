@@ -168,7 +168,13 @@ class ActionGate:
                     # 测试抓到的 bug：reach 默认是中位距离，最远的候选比中位远，被 `dist <= reach` 排除，
                     # 于是「挑最远」实际只挑到「中位以内最远的那个」——不是最远。
                     if prefer_far and _ok.size >= 1:
-                        reach = max(reach, float(np.max(_ok)))
+                        # 2026-11-22 22:35：**prefer_far 也要限制在「走得到的范围」**。
+                        # 根因（人家查了四次才查到）：prefer_far 时 reach 放宽到「最远距离」
+                        # （她的地形散在 21 万外），于是「挑最远」挑到 21 万外的目标——
+                        # 一步走 585，永远走不到。她走一步，归属没变，arrival_hist 不变，
+                        # prefer_far 一直满足，一直走不到。
+                        # 上限 = 10 个她自己的半径（走 10 步能到）。这是「感知和行动匹配」。
+                        reach = min(max(reach, float(np.max(_ok))), 10 * s)
                     # 2026-11-18 下午：fresh 也要排除「几乎重合」的候选（dist < s）。
                     # 上面 10:00 那条只在 fallback 分支加了 dist >= s，fresh 分支漏了。
                     # 实测（补丁版 200 步）：69.5% 的「离开」位移 < 1 —— 因为她挑到的是
