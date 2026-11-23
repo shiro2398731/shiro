@@ -325,6 +325,15 @@ def build_l5_payload(stream) -> dict:
         # 2026-11-21 22:55：跳过旧存档里的 tuple（同 visited_places 的理由）。
         "arrival_hist": [int(v) for v in getattr(stream, "_arrival_hist", ())
                          if isinstance(v, (int, float))][-6:],
+        # 2026-11-23 16:55：两个小账本也存档（优化点 1，白默说「有别的做吗」）。
+        # _dwell_history：她「待过多久」的历史（决定 fatigue_rate——多快待腻）。
+        # _recent_actions：她最近的动作（决定 recover_rate——遗忘快慢）。
+        # 不存的话，每次重启这两个都从零积累——她的「疲劳」和「遗忘」会短暂「失忆」。
+        # 都是小 deque（几十个 int），存进去没负担。
+        "dwell_history": [int(v) for v in getattr(stream, "_dwell_history", ())
+                          if isinstance(v, (int, float))],
+        "recent_actions": [int(v) for v in getattr(stream, "_recent_actions", ())
+                           if isinstance(v, (int, float))],
 
         "attractors": attrs,
         "action_counts": action_counts,
@@ -587,6 +596,20 @@ def apply_l5_payload(stream, payload: dict) -> None:
             stream.rest.fatigue_rate = stream.fatigue_rate_state
     if "max_travel" in payload:
         stream._max_travel = float(payload.get("max_travel") or 0.0)
+    if "dwell_history" in payload:
+        try:
+            _dh = payload.get("dwell_history") or ()
+            stream._dwell_history = collections.deque(
+                (int(v) for v in _dh), maxlen=getattr(stream, "_dwell_history", None).maxlen or 32)
+        except Exception:  # noqa: BLE001
+            pass
+    if "recent_actions" in payload:
+        try:
+            _ra = payload.get("recent_actions") or ()
+            stream._recent_actions = collections.deque(
+                (int(v) for v in _ra), maxlen=getattr(stream, "_recent_actions", None).maxlen or 64)
+        except Exception:  # noqa: BLE001
+            pass
     if "arrival_hist" in payload:
         try:
             _ah = payload.get("arrival_hist") or ()
