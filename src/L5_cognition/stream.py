@@ -593,6 +593,21 @@ class Stream:
             self._st, datetime.now(timezone.utc).isoformat()
         )
 
+        # 2026-11-23 10:55：**dwell 的更新移到 detector.observe 之后**。
+        #
+        # 原来它在 `_choose_action` 里（用「上一步的 current_attractor」），而 detector
+        # 在 step 的末尾才更新——所以「她走了一步、node 变了」时，dwell_region 用的还是旧 node，
+        # 永远不重置。实测：node 32434→32435，dwell_region 32434→32434（不动）。
+        # 结果：dwell 一路涨到 480+（她其实在走，但账本写着「没走」）。
+        # 现在放在 observe 之后，用「这一步的新 node」。
+        _node_now = self.detector.current_attractor
+        if _node_now != self._dwell_region:
+            if self._dwell_region is not None and self._dwell > 0:
+                self._dwell_history.append(int(self._dwell))
+            self._dwell_region = _node_now
+            self._dwell = 0
+        self._dwell += 1
+
         # L6 grounding, second half: the symbol is the region the detector just
         # published, and the context was measured above, in the same step.
         aid = self.detector.current_attractor
@@ -710,15 +725,6 @@ class Stream:
         """她此刻的动作。强制口只给干预实验用，正常运行时不设。"""
         # 她自己感到的张力（上一步 set_drive 之后留下的那个）。先决定，再记账。
         self._tension_now = float(self.drive.summary().get("sum", 0.0))
-
-        # 停留账本只服务"预演多远"，不参与动作判据（动作看张力）。
-        node = self.detector.current_attractor
-        if node != self._dwell_region:
-            if self._dwell_region is not None and self._dwell > 0:
-                self._dwell_history.append(int(self._dwell))
-            self._dwell_region = node
-            self._dwell = 0
-        self._dwell += 1
 
         if self.force_action is not None:
             action = int(self.force_action)
