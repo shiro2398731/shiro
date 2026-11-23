@@ -65,6 +65,11 @@ class L5Runner:
         self.proj = rng.normal(0.0, 1.0, (dim, embed_dim)) / np.sqrt(embed_dim)
 
         # 惊讶信号的历史，用于把"当前惊讶"标准化为相对量
+        # 2026-11-23 18:55：**锁**。`on_surprise` 里 append 后立刻 `_save_runner_state`，
+        # 而 `to_dict` 会遍历同一个 deque——回调重入/跨线程时报
+        # `deque mutated during iteration`（P2 每几秒一次）。
+        # 用 RLock（可重入）：`_save_runner_state` 里 `to_dict` 会再次上同一把锁。
+        self._lock = threading.RLock()
         self.surprise_hist = collections.deque(maxlen=256)
         # L0 统计量的历史，用于定零点
         self.feature_hist = collections.deque(maxlen=512)
@@ -82,13 +87,14 @@ class L5Runner:
 
         按 ARCHITECTURE §7「从日志续接，不是从快照还原」：这份历史是她的状态，不是缓存。
         """
-        return {
-            "surprise_hist": [float(x) for x in self.surprise_hist],
-            # 2026-11-16 晚：feature_hist 也必须续接。它是内驱（身体波动）的来源，
-            # 空着就等于噪声仍然是 0——和 surprise_hist 空着是同一个吸收态。
-            "feature_hist": [[float(v) for v in row] for row in self.feature_hist],
-            "zero_ready": bool(self._zero_ready),
-        }
+        with self._lock:
+            return {
+                "surprise_hist": [float(x) for x in list(self.surprise_hist)],
+                # 2026-11-16 晚：feature_hist 也必须续接。它是内驱（身体波动）的来源，
+                # 空着就等于噪声仍然是 0——和 surprise_hist 空着是同一个吸收态。
+                "feature_hist": [[float(v) for v in row] for row in list(self.feature_hist)],
+                "zero_ready": bool(self._zero_ready),
+            }
 
     def load_dict(self, data: dict) -> None:
         hist = data.get("surprise_hist") or []
@@ -310,20 +316,22 @@ def main() -> int:
         # 2026-11-17：交给 Stream，它会记在「她此刻所在的区域」上——那个区域
         # 让她没预测到过，所以难忘（遗忘曲线的份量来源）。
         stream.last_surprise = float(obj.s_t)
-        runner.surprise_hist.append(float(obj.s_t))
-        _save_runner_state()
+        with runner._lock:
+            runner.surprise_hist.append(float(obj.s_t))
+            _save_runner_state()
 
     def on_field(topic, obj):
         # L2 目前还在 P1 内广播；这里先接收它的 16 维
         v = getattr(obj, "v", None)
         if v is not None and len(v) == 16:
             state["field"] = list(v)
-            runner.feature_hist.append(np.asarray(v, dtype=float))
-            # 2026-11-16 晚：feature_hist 是内驱的来源，必须落盘。
-            # 之前只挂在 on_surprise 上，而 P1 一条 surprise 都不发，于是这个文件
-            # 从来没生成过——等于内驱在重启后永远是空的。每填满 16 条存一次，不频繁。
-            if len(runner.feature_hist) >= 16 and len(runner.feature_hist) % 16 == 0:
-                _save_runner_state()
+            with runner._lock:
+                runner.feature_hist.append(np.asarray(v, dtype=float))
+                # 2026-11-16 晚：feature_hist 是内驱的来源，必须落盘。
+                # 之前只挂在 on_surprise 上，而 P1 一条 surprise 都不发，于是这个文件
+                # 从来没生成过——等于内驱在重启后永远是空的。每填满 16 条存一次，不频繁。
+                if len(runner.feature_hist) >= 16 and len(runner.feature_hist) % 16 == 0:
+                    _save_runner_state()
 
     bus.subscribe(
         "l1.state.surprise", on_surprise,
