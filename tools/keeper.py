@@ -132,7 +132,7 @@ class Watcher:
     "刚起来还没心跳"与"真的又死了"必须分开，否则一拍一杀会把同一模块起成一片。
     """
 
-    def __init__(self, stale_s: float = 30.0, min_life_s: float = 15.0,
+    def __init__(self, stale_s: float = 30.0, min_life_s: float = 60.0,
                  fail_limit: int = 5) -> None:
         self.stale_s = float(stale_s)
         self.min_life_s = float(min_life_s)
