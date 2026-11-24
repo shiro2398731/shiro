@@ -893,6 +893,17 @@ class Stream:
         return {
             "attractor_id": (self.detector.current_attractor
                              if self.detector.current_attractor is not None else -1),
+            # 2026-11-24 15:10：**GWT 接 L6**（意识层第一步，白默点头的方向）。
+            #
+            # `workspace.observe()` 每步都在跑（点火 = 全局工作空间广播），
+            # 但之前只存在 `_last_ignition` 里、没有任何下游读它——「她注意什么」
+            # 和「她说什么」是断的。这里把「点火的那个区域 uid」放进广播，
+            # L6 就能读到「她此刻注意什么」。
+            #
+            # 注意：`ignition` 是「点火」不是「位置」——它是「这一刻全系统可见的东西」，
+            # 和 `attractor_id`（她在哪个区域）不是同一个量。
+            "ignition": (self._last_ignition.attractor_id
+                         if self._last_ignition is not None else -1),
             "potential": (self.landscape.potential(st.x) if st is not None else 0.0),
             # Kept because StreamState carries a vector and the contract says so.
             # It is not read by L6; the whitelist in the adapter is what enforces

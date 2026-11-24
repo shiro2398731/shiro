@@ -110,7 +110,9 @@ class LlmAdapter:
         调用方拿不到任何东西，所以也无法拿它去影响认知。
         """
         # 白名单：只允许这几个字段出去
-        allowed = {"trace", "sequence", "intent"}
+        # 2026-11-24 15:40：加了 `ignition`——「她此刻注意什么」（全局工作空间的点火 uid）。
+        # 之前只有 trace（她在哪），没有「注意」——GWT 的广播在 L6 这里是断的。
+        allowed = {"trace", "sequence", "intent", "ignition"}
         payload = {k: v for k, v in symbols.items() if k in allowed}
 
         text = self._call_api(payload)

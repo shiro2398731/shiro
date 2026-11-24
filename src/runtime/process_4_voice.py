@@ -94,6 +94,10 @@ def main() -> int:
 
     def on_stream(topic, obj):
         aid = getattr(obj, "attractor_id", -1)
+        # 2026-11-24 15:40：GWT 接 L6——「她此刻注意什么」（点火 uid）。
+        # `attractor_id` 是她「在哪」；`ignition` 是「这一刻全系统可见的东西」。
+        # 没点火时是 -1（她的 workspace 只在超过阈值时才点火，见 workspace.py）。
+        ign = getattr(obj, "ignition", -1)
         if aid == last_published["k"]:
             return
         last_published["k"] = aid
@@ -110,6 +114,7 @@ def main() -> int:
             "trace": str(aid),
             "sequence": [str(aid)],
             "intent": "state" if aid >= 0 else "silent",
+            "ignition": str(ign),
         }
         adapter.translate(syms, caller_note="placeholder")
 
