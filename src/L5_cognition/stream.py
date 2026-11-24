@@ -358,7 +358,12 @@ class Stream:
         self._step_count += 1
 
         # 独立自立：记下这一步的动作（她的，不是我们给的）
-        self._recent_actions.append(1 if getattr(self, "_action", None) == "leave" else 0)
+        # 2026-11-24：`_action` 是整数（HOLD/LEAVE），原来这里和字符串 "leave"
+        # 比较 —— 永远 False，于是 `_recent_actions` 恒为 0，「遗忘多快由她的活动
+        # 决定」这条机制从来没生效（recover_rate 永远收敛到 0.001）。这是
+        # tests/test_no_senescence 的活动探针抓到的：同样 480 步，HOLD 与 LEAVE
+        # 得到同一个恢复速率。
+        self._recent_actions.append(1 if int(self._action) == LEAVE else 0)
         if self._step_count % 16 == 0 and len(self._recent_actions) >= 16:
             # 她最近的活动强度（leave 占比）——这是她自己的量
             _act = sum(self._recent_actions) / float(len(self._recent_actions))
@@ -389,7 +394,10 @@ class Stream:
         # 有限性（2026-11-21 夜）：活动才耗电；耗尽就休眠（不是死）
         # 代谢（2026-11-21 11:50）：每步补充（电脑开着 = 有电），封顶 1.0
         if not self.asleep:
-            _burn = self.energy_burn if getattr(self, "_action", None) == "leave" else self.energy_burn * 0.1
+            # 2026-11-24：同一个 bug 的第二处。原来和 "leave" 字符串比，永远
+            # 走 0.1× 分支 —— 「活动才耗电」也从来没生效（每步都按静止耗电）。
+            _burn = (self.energy_burn if int(self._action) == LEAVE
+                     else self.energy_burn * 0.1)
             self.energy = min(1.0, max(0.0, self.energy - _burn + self.energy_recharge))
             if self.energy <= 0.0:
                 self.asleep = True
@@ -794,6 +802,11 @@ class Stream:
         # 那就退回旧行为（背离质心）——没地方可去，至少别崩。
         others = None
         uids = None
+        # 2026-11-24：`places` 也必须在「只有一个区域」时存在。原来它只在
+        # `len(attrs) > 1` 分支里赋值，于是她只剩一个区域时任何一次 LEAVE 都
+        # 抛 UnboundLocalError —— 由 tests/test_no_senescence 的强制 LEAVE 探针抓到。
+        # 真机有 1016 个区域所以没暴露；这是一个潜伏的崩溃点。
+        places = None
         if len(attrs) > 1:
             idx = [i for i in range(len(attrs)) if i != row]
             others = np.stack([np.asarray(attrs[i].mu, dtype=float) for i in idx])
