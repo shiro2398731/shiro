@@ -298,6 +298,12 @@ class GroundingTable:
         return {
             "buckets": int(self.buckets),
             "hist": int(self.hist),
+            # 2026-11-24：分桶用的「她自己历史上的速度/张力」也必须跨重启。
+            # 不存的话重启后 `bucket()` 在 64 个样本之前一律返回 None，
+            # 于是指代标签是 "none" —— 这不是「还没开始」，是「她又忘了自己
+            # 平常的速度和张力长什么样」。经验连续性属于她的状态，不是缓存。
+            "quantile_hist": {name: [float(v) for v in dq]
+                              for name, dq in self._hist.items() if dq},
             "counts": {str(s): {",".join(str(int(x)) for x in c): int(k)
                                 for c, k in row.items()}
                        for s, row in self.counts.items()},
@@ -313,6 +319,15 @@ class GroundingTable:
             for key, k in row.items():
                 ctx = tuple(int(x) for x in str(key).split(",") if str(x) != "")
                 t._add(symbol, ctx, int(k))
+        # 旧存档没有 quantile_hist：从空历史开始（诚实，不伪造分位）。
+        for name, vals in (data.get("quantile_hist") or {}).items():
+            dq = t._hist.setdefault(str(name),
+                                    collections.deque(maxlen=t.hist))
+            for v in vals:
+                try:
+                    dq.append(float(v))
+                except (TypeError, ValueError):
+                    continue
         # `total` is derived by _add(); a stored value that disagrees is ignored
         # rather than trusted, so counts and totals cannot diverge.
         return t
