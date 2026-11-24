@@ -83,7 +83,7 @@ class Stream:
         dt: float = 0.01,
         recover_rate: float = 0.002,
         max_attractors: int = 8192,
-        seed: int = 0,
+        seed: int | None = None,
     ):
         self.D = int(dim)
         self.landscape = Landscape(
@@ -92,7 +92,21 @@ class Stream:
         self.dynamics = Dynamics(dim=dim, gamma=gamma, dt=dt)
         self.detector = TransitionDetector(self.landscape.state_space)
         self.workspace = GlobalWorkspace()
+        # 2026-11-24 12:40：**出生熵**（白默：「每个部署独一无二」）。
+        #
+        # 之前 seed 默认 0——所有部署「掷同样的骰子」。现在 seed=None 就
+        # 从操作系统的熵池取（os.urandom）——每个部署「出生不同」。
+        # 真机/重启：P2 从 l5.pkl 读 `born_seed` 传进来——「同一个她」不变。
+        #
+        # 注意：`x` 的初始位置仍由 `init_state(zero)` 决定（zero 来自 L0 统计，
+        # 而 L0 统计来自 rng）——所以「种子不同」会「链式」让 x 也不同。
+        import os as _os
+        if seed is None:
+            seed = int.from_bytes(_os.urandom(8), "little")
+        self._born_seed = int(seed)
         self.rng = np.random.default_rng(seed)
+        # 「体质」：能量初始 ±10%（从种子推，不是人定的数）。出生时定，之后不变。
+        self._born_energy = float(0.90 + 0.10 * self.rng.random())
 
         self._st: Optional[DynamicState] = None
 

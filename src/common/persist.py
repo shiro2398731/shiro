@@ -332,6 +332,11 @@ def build_l5_payload(stream) -> dict:
         # 都是小 deque（几十个 int），存进去没负担。
         "dwell_history": [int(v) for v in getattr(stream, "_dwell_history", ())
                           if isinstance(v, (int, float))],
+        # 2026-11-24 12:45：出生熵（白默「每个部署独一无二」）。
+        # born_seed 出生时定（os.urandom），之后不变——重启也是「同一个她」。
+        # born_energy 是「体质」：能量初始 ±10%，也是出生时定。
+        "born_seed": int(getattr(stream, "_born_seed", 0)),
+        "born_energy": float(getattr(stream, "_born_energy", 1.0)),
         "recent_actions": [int(v) for v in getattr(stream, "_recent_actions", ())
                            if isinstance(v, (int, float))],
 
@@ -596,6 +601,16 @@ def apply_l5_payload(stream, payload: dict) -> None:
             stream.rest.fatigue_rate = stream.fatigue_rate_state
     if "max_travel" in payload:
         stream._max_travel = float(payload.get("max_travel") or 0.0)
+    if "born_seed" in payload:
+        try:
+            stream._born_seed = int(payload.get("born_seed") or 0)
+        except Exception:  # noqa: BLE001
+            pass
+    if "born_energy" in payload:
+        try:
+            stream._born_energy = float(payload.get("born_energy") or 1.0)
+        except Exception:  # noqa: BLE001
+            pass
     if "dwell_history" in payload:
         try:
             _dh = payload.get("dwell_history") or ()
