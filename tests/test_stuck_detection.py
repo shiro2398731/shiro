@@ -29,7 +29,7 @@ def test_alternating_two_places_is_stuck() -> None:
     """A,B,A,B,... —— 第一版「连续同一个」在这里永不触发，第二版应该判定卡住。"""
     for hist in ([1, 2, 1, 2], [1, 2, 1, 2, 1, 2]):
         assert _stuck(hist) is True, hist
-    print("       A↔B 交替 -> 判卡住（这就是第一版漏掉的）")
+    print("       A->B 交替 -> 判卡住（这就是第一版漏掉的）")
 
 
 def test_one_place_is_stuck() -> None:

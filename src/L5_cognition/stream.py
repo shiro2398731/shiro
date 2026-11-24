@@ -96,7 +96,8 @@ class Stream:
         #
         # 之前 seed 默认 0——所有部署「掷同样的骰子」。现在 seed=None 就
         # 从操作系统的熵池取（os.urandom）——每个部署「出生不同」。
-        # 真机/重启：P2 从 l5.pkl 读 `born_seed` 传进来——「同一个她」不变。
+        # 真机/重启：P2 从 l5.pkl 恢复 `rng_state`（2026-11-24 加），所以她的
+        # 骰子是**接着**掷，不是换了个人重新掷；born_seed 只用来标识「同一个出生」。
         #
         # 注意：`x` 的初始位置仍由 `init_state(zero)` 决定（zero 来自 L0 统计，
         # 而 L0 统计来自 rng）——所以「种子不同」会「链式」让 x 也不同。
@@ -919,6 +920,10 @@ class Stream:
             "speed": Dynamics.speed(st) if st is not None else 0.0,
             "attractor_id": (self.detector.current_attractor
                              if self.detector.current_attractor is not None else -1),
+            # 2026-11-24：点火也进观测流。之前它只被 L6 读到（-1 一路下去），
+            # 日志里查不到「这一步有没有点火」——GWT 因此无法被评估。
+            "ignition": (self._last_ignition.attractor_id
+                         if self._last_ignition is not None else -1),
             "potential": (self.landscape.potential(st.x) if st is not None else 0.0),
             "n_attractors": len(ss),
             # 行动是她自己的，不是从外面看出来的统计量：记名字与比例。

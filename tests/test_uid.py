@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ast
 import collections
+import copy
 import os
 import pathlib
 import sys
@@ -45,10 +46,30 @@ L4 = ROOT / "src" / "L4_drive"
 L8I = ROOT / "src" / "L8_identity"
 
 
+_PAYLOAD: dict | None = None
+
+
+def _payload() -> dict:
+    """One frozen copy of her checkpoint, so every `_ran()` starts identical.
+
+    2026-11-24：原来每次 `_ran()` 直接从磁盘读 l5.pkl。那不是受控对比：
+    P2 每 60 s 重写一次，而且旧进程写的存档没有 rng 状态，两次读入会拿到
+    不同的骰子（实测 born_seed 相同、第一次正态抽样 -1.570 vs 1.684）。
+    经过一次 build/apply 往返之后，两次运行拿到的是同一份字节——
+    包括恢复的随机流，「同一份存档」才真的等于「同一条轨迹」。
+    """
+    global _PAYLOAD
+    if _PAYLOAD is None:
+        st = Stream()
+        if not persist.load_l5(st):
+            raise SystemExit("no L5 archive for this test")
+        _PAYLOAD = persist.build_l5_payload(st)
+    return _PAYLOAD
+
+
 def _ran(steps: int = 60, dim: int = 128) -> Stream:
     st = Stream()
-    if not persist.load_l5(st):
-        raise SystemExit("no L5 archive for this test")
+    persist.apply_l5_payload(st, copy.deepcopy(_payload()))
     for _ in range(steps):
         st.landscape.set_noise_amplitude(0.02)
         st.step()
@@ -250,6 +271,20 @@ def _rename_everywhere(st, perm: dict) -> None:
     # The stay ledger names the region she has been in.
     if st._dwell_region is not None:
         st._dwell_region = int(perm[int(st._dwell_region)])
+
+    # 2026-11-24：uid 账本后来又多了三处，重命名必须一起跟过去。不改它们，
+    # 测的就不是「名字没有含义」，而是「测试漏改了自己的字段」：
+    #   _visited_places / _arrival_hist —— 探索判据（去没去过）按 uid 记账；
+    #   _last_ignition                 —— 点火记录里存的是区域名。
+    st._visited_places = {
+        (int(perm[int(v)]) if isinstance(v, int) and int(v) in perm else v)
+        for v in st._visited_places}
+    st._arrival_hist = collections.deque(
+        [int(perm[int(v)]) for v in st._arrival_hist],
+        maxlen=st._arrival_hist.maxlen)
+    if st._last_ignition is not None:
+        st._last_ignition.attractor_id = int(
+            perm[int(st._last_ignition.attractor_id)])
 
     # A fresh name must never collide with a live one.
     space._next_uid = max(int(a.uid) for a in space.attractors()) + 1

@@ -217,3 +217,68 @@ class GlobalWorkspace:
     @property
     def ignition_count(self) -> int:
         return len(self.history)
+
+    # ---------- persistence ----------
+    #
+    # Added 2026-11-24: none of this was in the checkpoint, so a restart began
+    # with an empty strength history. `reference_level()` then returned None and
+    # `observe()` could not ignite until 256 fresh peaks had been collected --
+    # and every ignition record was lost, which made "what was globally
+    # available" unobservable across restarts.
+    #
+    # The reference level comes from her own peak history, so this is state, not
+    # a cache: without it the bar is undefined after a restart.
+
+    def to_dict(self) -> dict:
+        def _ign(i: Ignition | None) -> dict | None:
+            if i is None:
+                return None
+            return {
+                "attractor_id": int(i.attractor_id),
+                "strength": float(i.strength),
+                "x": [float(v) for v in i.x],
+                "t_event": str(i.t_event),
+            }
+
+        return {
+            "strength_hist": [float(v) for v in self._strength_hist],
+            "history": [_ign(i) for i in self.history],
+            "current": _ign(self._current),
+            "active_mu": (None if self._active_mu is None
+                          else [float(v) for v in self._active_mu]),
+            "active_sigma": float(self._active_sigma),
+            "active_id": (None if self._active_id is None
+                          else int(self._active_id)),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "GlobalWorkspace":
+        g = cls()
+        for v in data.get("strength_hist") or []:
+            g._strength_hist.append(float(v))
+        for rec in data.get("history") or []:
+            if not isinstance(rec, dict):
+                continue
+            g.history.append(Ignition(
+                attractor_id=int(rec.get("attractor_id", -1)),
+                strength=float(rec.get("strength", 0.0)),
+                x=np.asarray(rec.get("x") or [], dtype=float),
+                t_event=str(rec.get("t_event", "")),
+            ))
+        cur = data.get("current")
+        if isinstance(cur, dict):
+            g._current = Ignition(
+                attractor_id=int(cur.get("attractor_id", -1)),
+                strength=float(cur.get("strength", 0.0)),
+                x=np.asarray(cur.get("x") or [], dtype=float),
+                t_event=str(cur.get("t_event", "")),
+            )
+        mu = data.get("active_mu")
+        if mu is not None:
+            arr = np.asarray(mu, dtype=float)
+            if arr.ndim == 1 and arr.size:
+                g._active_mu = arr
+                g._active_sigma = float(data.get("active_sigma", 0.0))
+                aid = data.get("active_id")
+                g._active_id = None if aid is None else int(aid)
+        return g

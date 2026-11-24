@@ -506,6 +506,11 @@ def main() -> int:
                     "potential": round(ss["potential"], 4),
                     "noise": round(stream.landscape.noise_amplitude, 5),
                     "transitions": transitions,
+                    # 2026-11-24：GWT 观测缺口。`ignition` 是这一步全系统可见的
+                    # 区域 uid（-1 = 没点火），`ignitions` 是本次进程累计点火数。
+                    # 之前这两个数不进快照，日志里查不到「她注意什么」。
+                    "ignition": int(ss["ignition"]),
+                    "ignitions": int(stream.workspace.ignition_count),
                     # 她的动作：谁选的、离开占多少。行动是她自己的，不是统计出来的。
                     "action": ss["action"],
                     "leave_share": ss["leave_share"],

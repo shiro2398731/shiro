@@ -304,6 +304,15 @@ def build_l5_payload(stream) -> dict:
             # 2026-11-17：这个地方让她「没预测到」过的最大程度。遗忘曲线的份量来源，
             # 不存的话重启就全归零——她从此分不清「刻骨铭心」和「路过」。
             "_peak_surprise": float(getattr(a, "_peak_surprise", 0.0)),
+            # 2026-11-24：sigma 带滞后缓存（只有在成员数翻倍时才重算）。存档那一刻
+            # 的值可能来自更早的成员集合，重算会差 1e-13 量级——而那是轨迹分叉的
+            # 种子（实测：同一份存档重启后第一步位置就不同）。连成员计数一起存。
+            "sigma": float(a.sigma),
+            "sigma_members_at": int(getattr(a, "_sigma_members_at", 0) or 0),
+            # 2026-11-24：自适应下限。装载时 `_apply_scale_floor` 只在「下限变了」
+            # 时才丢 sigma 缓存；不存这个数，重启时每个区域都被当成「下限变了」，
+            # 缓存全被重算，sigma 与存档那一刻差 1e-13 量级——足够让第一步分叉。
+            "_scale_floor": getattr(a, "_scale_floor", None),
             # Stable identity, not a position. See Attractor.uid.
             "uid": int(getattr(a, "uid", 0)),
         }
@@ -311,6 +320,11 @@ def build_l5_payload(stream) -> dict:
     ]
     return {
         "rest": stream.rest.to_dict(),
+        # 2026-11-24：地形上的两个调制量。rest 每步重设（可从 rest 场推），pull
+        # 每 16 步才重算一次、两次之间是慢变量——不原样存，重启后第一步的
+        # 梯度就缺了它（实测：同一份存档，重启后第一步位置立刻差 1e-2 量级）。
+        "pull": (None if getattr(ls.state_space, "_pull", None) is None
+                 else [float(v) for v in ls.state_space._pull]),
         "energy": float(getattr(stream, "energy", 1.0)),
         "energy_burn": float(getattr(stream, "energy_burn", 1e-6)),
         "asleep": bool(getattr(stream, "asleep", False)),
@@ -390,6 +404,29 @@ def build_l5_payload(stream) -> dict:
             "rounds": stream.identity.rounds,
             "appear": {f"{a},{b}": c
                        for (a, b), c in stream.identity._appear.items()},
+        },
+        # 2026-11-24：全局工作空间的点火历史与参考线。之前不存 → 重启后
+        # `reference_level()` 为 None、256 步内不可能点火，而且点火记录全丢，
+        # 「她此刻注意什么」在重启前后无法对照。参考线是她自己峰值的分位，
+        # 属于状态，不是缓存。
+        "workspace": stream.workspace.to_dict(),
+        # 2026-11-24：随机数状态。之前 `born_seed` 存了却没人用它播种，P2 每次都
+        # 拿 os.urandom 新建 rng —— 同一份存档读两次会走出不同轨迹（实测第一次
+        # 正态抽样 -1.570 vs 1.684），test_uid 的重命名测试就是因此红的。
+        # 存 bit_generator.state 而不是只存种子：这样重启是**接着**她的骰子，
+        # 不是从头再掷（从头掷等于每次重启都给她换一条噪声流）。
+        "rng_state": stream.rng.bit_generator.state,
+        # 2026-11-24：L4 的张力场。`_last` 不存的话，重启后的第一步看到的是
+        # 「没有张力」：`_choose_action` 拿到 tension 0 → HOLD，而保存那一刻的
+        # 她带着一批未解决张力（实测 286 条 / 和 1334.6）。第一步动作一错，
+        # 轨迹就分叉。`gain` 是她自己量到的梯度尺度，也必须跟着回来，
+        # 否则第一步的判据刻度换成默认值。
+        "drive": {
+            "gain": (None if stream.drive.gain is None
+                     else float(stream.drive.gain)),
+            "gain_set": bool(getattr(stream, "_drive_gain_set", False)),
+            "grad_samples": [float(v) for v in
+                             getattr(stream, "_drive_grad_samples", ())],
         },
         "zero": ls._zero,
         "x": stream._st.x if stream._st is not None else None,
@@ -731,6 +768,13 @@ def apply_l5_payload(stream, payload: dict) -> None:
         # When she was last here. 0 = unknown (legacy record); fold_auto treats
         # unknown as "cannot be shown to be overdue" rather than as "long ago".
         a._last_seen_step = int(d.get("_last_seen_step", 0))
+        # 2026-11-24：sigma 的滞后缓存。没有它，装载时按当前成员重算会得到
+        # 1e-13 量级的差，第一步的梯度就不同了。
+        if d.get("sigma") is not None:
+            a._sigma_cache = float(d["sigma"])
+            a._sigma_members_at = int(d.get("sigma_members_at", 0) or 0)
+        _sf = d.get("_scale_floor")
+        a._scale_floor = None if _sf is None else float(_sf)
         # 2026-11-17：读回「这个地方让她没预测到过的最大程度」。
         # 旧存档没有这个字段 -> 0.0，等于「没被惊讶过」，和「路过」一样。
         try:
@@ -839,6 +883,28 @@ def apply_l5_payload(stream, payload: dict) -> None:
             appear[(int(a), int(b))] = int(c)
         stream.identity._appear.clear()
         stream.identity._appear.update(appear)
+    # Global workspace. Older checkpoints have no "workspace": an empty history
+    # is the honest starting point there (the peaks were never recorded).
+    ws = payload.get("workspace")
+    if isinstance(ws, dict):
+        from src.L5_cognition.workspace import GlobalWorkspace
+        stream.workspace = GlobalWorkspace.from_dict(ws)
+
+    # Continue her random stream instead of starting a new one. Restoring the
+    # bit-generator state (not just born_seed) is what makes two loads of the
+    # same checkpoint produce the same trajectory -- measured before the fix:
+    # born_seed identical, first normal draw -1.570 vs 1.684.
+    rs = payload.get("rng_state")
+    if isinstance(rs, dict):
+        try:
+            stream.rng = np.random.default_rng()
+            stream.rng.bit_generator.state = rs
+        except (TypeError, ValueError) as _rng_err:
+            # A malformed state must not cost her the whole restart: fall back
+            # to a fresh stream and say so.
+            print(f"[persist] rng state restore failed ({_rng_err}); "
+                  f"drawing a fresh stream")
+
     ls.state_space._recent.extend(payload["recent"])
     ls._zero = payload["zero"]
     if payload["x"] is not None:
@@ -856,6 +922,44 @@ def apply_l5_payload(stream, payload: dict) -> None:
     # before the floor was applied at the end of that same step.
     ls.state_space._apply_scale_floor()
     ls.state_space._scale_floor_pending = False
+
+    # 地形调制：rest（`step()` 每步重设）与 pull（每 16 步重算的慢变量）。
+    # 两者都进 potential 的深度项；少一个，第一步的梯度就不是保存那一刻的梯度。
+    _attrs_now = ls.state_space.attractors()
+    if getattr(stream, "_use_rest", False) and _attrs_now:
+        for _i in range(len(_attrs_now)):
+            stream.rest.touch(_i)
+        ls.state_space.set_rest([stream.rest.value(_i)
+                                 for _i in range(len(_attrs_now))])
+    _pull = payload.get("pull")
+    if _pull is not None:
+        ls.state_space.set_pull(np.asarray(_pull, dtype=float))
+
+    # L4：把张力场重新装上。`_last` 是下一步判据的输入（`_choose_action`
+    # 读它的和），而 `deflection()` 是由图 + 地形 + 她自己的 gain 算出来的，
+    # 不需要存：同样的图与地形必然给出同样的偏转。只要把 gain 接回来，
+    # 重启后的第一步就和保存那一刻用同一套张力尺度。
+    dr = payload.get("drive")
+    if isinstance(dr, dict):
+        _g = dr.get("gain")
+        stream.drive.gain = None if _g is None else float(_g)
+        stream._drive_gain_set = bool(dr.get("gain_set", False))
+        stream._drive_grad_samples = [float(v) for v in
+                                      (dr.get("grad_samples") or [])]
+        if stream.drive.gain is not None:
+            try:
+                stream.drive.tensions(ls.state_space, stream.graph)
+                ls.set_drive(stream.drive.deflection(
+                    ls.state_space, stream.graph))
+            except Exception as _drv_err:  # noqa: BLE001
+                print(f"[persist] drive tilt restore skipped: {_drv_err}")
+        else:
+            # 还没有 gain（早期/存档太新）：偏转场本来就已经是「没有」，
+            # 但张力量表仍是下一步判据的输入，必须重建。
+            try:
+                stream.drive.tensions(ls.state_space, stream.graph)
+            except Exception as _drv_err:  # noqa: BLE001
+                print(f"[persist] drive tensions restore skipped: {_drv_err}")
 
 
 def build_acc_payload(accumulator) -> dict:
