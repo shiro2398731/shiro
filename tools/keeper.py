@@ -230,7 +230,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="watch shiro's modules and restart the dead ones")
     ap.add_argument("--interval", type=float, default=5.0)
     ap.add_argument("--stale-s", type=float, default=30.0)
-    ap.add_argument("--min-life-s", type=float, default=15.0)
+    # 2026-11-24 晚：默认 15 -> 60。`headless.py` 起 keeper 时**从来没传这个参数**，
+    # 所以「改成 60」一直没生效——keeper 用 15 秒窗口，冷启动还没心跳就被判死，补一套，
+    # 两套抢端口。60 秒是「冷启动 + 第一次心跳」的余量。
+    ap.add_argument("--min-life-s", type=float, default=60.0)
     ap.add_argument("--fail-limit", type=int, default=5)
     ap.add_argument("--tag", action="append", choices=sorted(MODULES))
     ap.add_argument("--once", action="store_true", help="走一拍就退出")

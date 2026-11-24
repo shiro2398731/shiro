@@ -150,7 +150,8 @@ def start() -> int:
             kwargs["creationflags"] = FLAGS
         else:
             kwargs["start_new_session"] = True
-        kp = subprocess.Popen([str(PY), "-u", "-m", KEEPER_MODULE], **kwargs)
+        kp = subprocess.Popen([str(PY), "-u", "-m", KEEPER_MODULE,
+                               "--min-life-s", "60"], **kwargs)
         log.close()
         below_normal(kp.pid)
         pids["KEEPER"] = kp.pid
