@@ -545,6 +545,7 @@ def main() -> int:
                 StreamState(
                     x_t=bs["x"],
                     attractor_id=str(bs["attractor_id"]),
+                    ignition=int(bs.get("ignition", -1)),
                     landscape_energy=float(bs["potential"]),
                     timestamp=datetime.now(timezone.utc).isoformat(),
                 ),

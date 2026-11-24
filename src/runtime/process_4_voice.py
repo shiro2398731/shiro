@@ -116,6 +116,9 @@ def main() -> int:
             "intent": "state" if aid >= 0 else "silent",
             "ignition": str(ign),
         }
+        # 2026-11-24 17:00：验证用。广播里 `ignition` 到底有没有值、变成什么，
+        # 不能只靠「代码路径通」——打出来才算。
+        print(f"[P4] stream: attractor_id={aid} ignition={ign} speak={gate.should_speak()}")
         adapter.translate(syms, caller_note="placeholder")
 
     bus.subscribe(

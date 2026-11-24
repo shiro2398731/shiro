@@ -292,8 +292,12 @@ class StreamState:
     """
     x_t: List[float]                    # current state vector
     attractor_id: str                   # id of the nearest salient attractor
-    landscape_energy: float             # potential at the current state
-    timestamp: str
+    # 2026-11-24 17:30：GWT 接 L6。`ignition` 是「这一刻全局工作空间点火的区域 uid」
+    # （`workspace.observe()` 的返回；没点火就是 -1）。它是**离散符号**，不是连续量——
+    # 和 attractor_id 同一类，所以不违反「L6 只读符号」那条红线。
+    ignition: int = -1
+    landscape_energy: float = 0.0
+    timestamp: str = ""
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
