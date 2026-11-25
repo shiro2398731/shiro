@@ -78,6 +78,25 @@ def _walk(seconds: float) -> dict:
     return {"steps": ds, "leaves": dl, "share": round(dl / max(1, ds), 3)}
 
 
+def _last_p2_snapshot() -> dict:
+    """最后一条 P2 的 L5 快照（只读日志）。放回家规则/点火之后能一眼看到。"""
+    log = Path("data/logs/observations.jsonl")
+    if not log.exists():
+        return {}
+    try:
+        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()[-400:]
+    except OSError:
+        return {}
+    for line in reversed(lines):
+        try:
+            d = json.loads(line)
+        except Exception:  # noqa: BLE001
+            continue
+        if d.get("process") == "P2" and d.get("section") == "L5":
+            return d.get("data") or {}
+    return {}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--walk", action="store_true")
@@ -111,6 +130,14 @@ def main() -> int:
         print(f"  最近       {int(recent['window_s'])}s 采样里 leave 占比 "
               f"{recent['leave_share_obs']:.0%}（{recent['leaves']}/{recent['obs_n']}）")
     print(f"  崩溃账     {crash['total']} 次（崩溃行 {crash.get('restart')} + 放弃重启 {crash.get('gave_up')}）")
+    snap = _last_p2_snapshot()
+    if snap:
+        _hd = snap.get("home_dist")
+        _lt = snap.get("leave_target")
+        print(f"  最近快照   离家 {('—' if _hd is None else round(float(_hd), 1))}"
+              f"  目标 {('—' if _lt is None else _lt)}"
+              f"  点火累计 {snap.get('ignitions', '—')}"
+              f"  转移 {snap.get('transitions', '—')}")
 
     if a.walk:
         print(f"\n  量她最近 {a.seconds:.0f} 秒走没走……")
