@@ -511,6 +511,9 @@ def main() -> int:
                     # 之前这两个数不进快照，日志里查不到「她注意什么」。
                     "ignition": int(ss["ignition"]),
                     "ignitions": int(stream.workspace.ignition_count),
+                    # 2026-11-25：回家规则（A1 候选④）——目标与离家距离。
+                    "leave_target": ss["leave_target"],
+                    "home_dist": ss["home_dist"],
                     # 她的动作：谁选的、离开占多少。行动是她自己的，不是统计出来的。
                     "action": ss["action"],
                     "leave_share": ss["leave_share"],

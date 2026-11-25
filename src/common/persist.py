@@ -416,6 +416,10 @@ def build_l5_payload(stream) -> dict:
         # 存 bit_generator.state 而不是只存种子：这样重启是**接着**她的骰子，
         # 不是从头再掷（从头掷等于每次重启都给她换一条噪声流）。
         "rng_state": stream.rng.bit_generator.state,
+        # 2026-11-25：回家规则的「家」。不存的话重启后这次外出从哪里开始就丢了，
+        # 规则会从她当时的位置重新起算（等于每次重启换一个领地）。
+        "home_x": (None if getattr(stream, "_home_x", None) is None
+                   else [float(v) for v in stream._home_x]),
         # 2026-11-24：L4 的张力场。`_last` 不存的话，重启后的第一步看到的是
         # 「没有张力」：`_choose_action` 拿到 tension 0 → HOLD，而保存那一刻的
         # 她带着一批未解决张力（实测 286 条 / 和 1334.6）。第一步动作一错，
@@ -904,6 +908,16 @@ def apply_l5_payload(stream, payload: dict) -> None:
             # to a fresh stream and say so.
             print(f"[persist] rng state restore failed ({_rng_err}); "
                   f"drawing a fresh stream")
+
+    # 回家规则的出发点。旧存档没有：从 None 开始，下次出门时自己设。
+    _hx = payload.get("home_x")
+    if _hx is not None:
+        try:
+            _hx_arr = np.asarray(_hx, dtype=float)
+            if _hx_arr.ndim == 1 and _hx_arr.size == int(ls.D):
+                stream._home_x = _hx_arr
+        except (TypeError, ValueError):
+            pass
 
     ls.state_space._recent.extend(payload["recent"])
     ls._zero = payload["zero"]

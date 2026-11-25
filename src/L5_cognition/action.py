@@ -56,6 +56,12 @@ NAMES = {HOLD: "hold", LEAVE: "leave"}
 class ActionGate:
     """从她自己的张力分布里选一个动作。只读状态，不改状态。"""
 
+    def __init__(self) -> None:
+        # 2026-11-25：目标持久化。`choose` 决定走不走，`direction` 决定去哪；
+        # 这里记下上一次选中的目标区域（uid），由 Stream 决定什么时候清空。
+        # 每步重选是她永远只够到最近那个区域的直接原因：一步 151.5，而目标在 619 外。
+        self.last_target: Optional[int] = None
+
     def choose(self, tension: float, past_tensions: Sequence[float]) -> int:
         """HOLD 或 LEAVE。
 
@@ -74,7 +80,8 @@ class ActionGate:
                   neighbours: Optional[np.ndarray] = None,
                   visited: Optional[Sequence] = None,
                   places: Optional[Sequence] = None,
-                  prefer_far: bool = False) -> Optional[np.ndarray]:
+                  prefer_far: bool = False,
+                  preferred_target: Optional[int] = None) -> Optional[np.ndarray]:
         """离开的方向。
 
         2026-11-17 改过：**指向最近的另一个区域，不是背离质心。**
@@ -104,6 +111,7 @@ class ActionGate:
         s = float(scale)
         if not np.isfinite(s) or s <= 0:
             return None
+        self.last_target = None
 
         if neighbours is not None:
             cand = np.asarray(neighbours, dtype=float)
@@ -111,6 +119,21 @@ class ActionGate:
                 d = cand - x
                 dist = np.linalg.norm(d, axis=1)
                 dist[~np.isfinite(dist)] = np.inf
+
+                # 2026-11-25：目标持久化。还没到就继续朝同一个目标走。
+                # 不加这条，每次 LEAVE 都重选，一步 151.5 永远只够到最近的那个区域
+                # （实测：60 步里 50 步 HOLD 之后整段 LEAVE，只够 32434↔32435 对调）。
+                if preferred_target is not None and places is not None:
+                    # 目标只是「名字」：生产里是 uid，测试里也可能是字符串，
+                    # 所以这里不转换类型（int('a') 会炸）。
+                    _pref = preferred_target
+                    for k in range(len(places)):
+                        if places[k] != _pref:
+                            continue
+                        if np.isfinite(dist[k]) and dist[k] > 0:
+                            self.last_target = places[k]
+                            return d[k] / dist[k] * min(s, float(dist[k]))
+                        break
 
                 # ── 2026-11-17 23:05：优先去「她还没去过的」区域 ──
                 #
@@ -211,6 +234,7 @@ class ActionGate:
                             k = int(max(fresh, key=lambda j: dist[j]))
                         else:
                             k = int(min(fresh, key=lambda j: dist[j]))
+                        self.last_target = place_keys[k]
                         return d[k] / dist[k] * min(s, float(dist[k]))
 
                 # 2026-11-18 09:50：她可能**正站在某个区域里**（dist=0）。
@@ -244,6 +268,8 @@ class ActionGate:
                     unit = d[j] / dist[j]
                     # 走「她自己半径」那么远，但不超过到对方的距离（免得穿过去）
                     step = min(s, float(dist[j]))
+                    self.last_target = (places[j] if places is not None
+                                        else None)
                     return unit * step
 
         d = x - np.asarray(centroid, dtype=float)

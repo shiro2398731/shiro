@@ -285,6 +285,10 @@ def _rename_everywhere(st, perm: dict) -> None:
     if st._last_ignition is not None:
         st._last_ignition.attractor_id = int(
             perm[int(st._last_ignition.attractor_id)])
+    # 2026-11-25：目标持久化又添了一个按 uid 存的字段（_leave_target）。
+    # 重命名必须一起跟过去，否则测的是测试自己漏改的状态。
+    if st._leave_target is not None and int(st._leave_target) in perm:
+        st._leave_target = int(perm[int(st._leave_target)])
 
     # A fresh name must never collide with a live one.
     space._next_uid = max(int(a.uid) for a in space.attractors()) + 1

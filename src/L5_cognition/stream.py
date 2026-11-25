@@ -221,6 +221,11 @@ class Stream:
         self._dwell_region = None
         self._dwell_history: collections.deque = collections.deque(maxlen=DWELL_MEMORY)
         self._amplitude_hint = 0.0
+        # 2026-11-25：回家规则（A1 候选④）。`_home_x` 是这次外出的出发点；
+        # 回到离它 1σ 内就清空，下次出门重新设。`_leave_target` 是正走向的目标，
+        # 到它的半径内才换。两个都是「她身体的状态」，不是判据。
+        self._home_x: Optional[np.ndarray] = None
+        self._leave_target: Optional[int] = None
         # 只给 tools/intervene.py 用：强制某一边，用来做 do(a) 对照。
         self.force_action = None
 
@@ -825,10 +830,45 @@ class Stream:
             self._visited_places.add(int(getattr(attrs[row], "uid", row)))
 
         # 2026-11-17 23:05：她「去过哪些」——这就是「探索」策略的凭据。
-        d = self.actions.direction(self._st.x, attrs[row].mu, scale,
-                                   neighbours=others, visited=self._visited_places,
-                                   places=places,
-                                   prefer_far=(len(set(self._arrival_hist)) <= 3 and len(self._arrival_hist) >= 4))
+        #
+        # 2026-11-25（A1 候选④）：两个改动。
+        # 1. 回家的锚点从「最近的区域」换成「这次外出的出发点」：新长出来的区域
+        #    会让「最近」一直跟着她走，原来的 4σ 锚定因此失效（实测最远 8.7 万）。
+        # 2. 目标持久化：走到目标半径内才换目标。每步重选的话，一步 151.5
+        #    永远只够到最近那个区域（实测只有 2 区、50 步 HOLD 后整段对调）。
+        _cur_x = np.asarray(self._st.x, dtype=float)
+        _home_dir = None
+        if self._home_x is not None:
+            _back = self._home_x - _cur_x
+            _hd = float(np.linalg.norm(_back))
+            if _hd <= float(scale):
+                self._home_x = None          # 回到家：这次外出结束
+            elif _hd > 4.0 * float(scale):
+                self._leave_target = None    # 越界：目标作废，先回家
+                _home_dir = _back / _hd * float(scale)
+        if self._home_x is None:
+            self._home_x = _cur_x.copy()     # 这次外出的出发点
+        if _home_dir is None and self._leave_target is not None:
+            _trow = space.uid_row().get(int(self._leave_target))
+            if _trow is None:
+                self._leave_target = None
+            else:
+                _tmu = np.asarray(attrs[_trow].mu, dtype=float)
+                if float(np.linalg.norm(_tmu - _cur_x)) <= float(scale):
+                    self._leave_target = None   # 到了，下一次重选
+
+        if _home_dir is not None:
+            d = _home_dir
+        else:
+            d = self.actions.direction(
+                self._st.x, attrs[row].mu, scale,
+                neighbours=others, visited=self._visited_places,
+                places=places,
+                prefer_far=(len(set(self._arrival_hist)) <= 3
+                            and len(self._arrival_hist) >= 4),
+                preferred_target=self._leave_target)
+            if d is not None:
+                self._leave_target = self.actions.last_target
         if d is not None:
             self._st = DynamicState(x=self._st.x + d, v=self._st.v)
             # 2026-11-21 21:20：到达后记「她到过的区域 uid」（不是位置）。
@@ -937,6 +977,12 @@ class Stream:
             # 日志里查不到「这一步有没有点火」——GWT 因此无法被评估。
             "ignition": (self._last_ignition.attractor_id
                          if self._last_ignition is not None else -1),
+            # 2026-11-25：回家规则的可观测性（A1 候选④）。
+            "leave_target": (None if self._leave_target is None
+                             else int(self._leave_target)),
+            "home_dist": (None if self._home_x is None
+                          else round(float(np.linalg.norm(
+                              self._home_x - self._st.x)), 1)),
             "potential": (self.landscape.potential(st.x) if st is not None else 0.0),
             "n_attractors": len(ss),
             # 行动是她自己的，不是从外面看出来的统计量：记名字与比例。
