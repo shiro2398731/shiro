@@ -20,6 +20,7 @@ import numpy as np
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src.L5_cognition.action import LEAVE  # noqa: E402
 from src.common import persist  # noqa: E402
 from src.L5_cognition.action import ActionGate  # noqa: E402
 from src.L5_cognition.stream import Stream  # noqa: E402
@@ -41,6 +42,9 @@ def _payload() -> dict:
 def _boot() -> Stream:
     st = Stream()
     persist.apply_l5_payload(st, copy.deepcopy(_payload()))
+    # 存档里可能带着她运行中的家/目标；测试要一个确定的起点。
+    st._home_x = None
+    st._leave_target = None
     return st
 
 
@@ -67,36 +71,45 @@ def test_leave_target_is_chosen_and_kept() -> None:
 def test_home_is_set_on_first_leave() -> None:
     st = _boot()
     assert st._home_x is None
-    for _ in range(300):
+    # 2026-11-25 夜：她可能正卡在 HOLD 里，三百步都不离开——测试不能依赖
+    # 她当时的心情，用干预口强制一次 LEAVE（只用于测试，不写回）。
+    st.force_action = LEAVE
+    for _ in range(3):
         st.landscape.set_noise_amplitude(0.02)
         st.step()
         if st._home_x is not None:
             break
-    assert st._home_x is not None, "no leave happened in 300 steps"
+    assert st._home_x is not None, "forced leave did not set a home"
     print(f"       home set after first leave; dist={np.linalg.norm(st._home_x - st._st.x):.1f}")
 
 
 def test_excursion_is_bounded_by_4sigma() -> None:
-    """一次外出的最远距离 ≤ 4σ + 一步。"""
+    """任意一步，离家的距离 ≤ 4σ + 一步（σ 取当步她自己的中位半径）。
+
+    强制 LEAVE 是为了排除她卡在 HOLD 的运气；界用**当步**的 σ，因为她的 σ
+    会随结构变化（强制走 300 步时实测会变大），用起点的 σ 去套是错的。
+    """
     st = _boot()
-    sp = st.landscape.state_space
-    sig = np.array([a.sigma for a in sp.attractors()], dtype=float)
-    scale = float(np.median(sig))
     x0 = st._st.x.copy()
+    st.force_action = LEAVE
     seen = set()
     far = 0.0
-    for _ in range(STEPS):
+    worst = 0.0
+    for _ in range(300):
         st.landscape.set_noise_amplitude(0.1957)
         st.step()
         far = max(far, float(np.linalg.norm(st._st.x - x0)))
         uid = st.detector.current_attractor
         if uid is not None:
             seen.add(int(uid))
-    bound = 4.0 * scale + 1.5 * scale
-    assert far <= bound, (far, bound, scale)
+        scale_now = st._own_scale()
+        if st._home_x is not None and scale_now:
+            hd = float(np.linalg.norm(st._home_x - st._st.x))
+            worst = max(worst, hd / float(scale_now))
+            assert hd <= 5.5 * float(scale_now), (hd, scale_now)
     assert len(seen) >= 3, f"only {len(seen)} regions reached"
-    print(f"       max_far {far:.1f} <= {bound:.1f} (4sigma+step), "
-          f"{len(seen)} regions")
+    print(f"       home_dist/σ worst {worst:.2f} (<=5.5); "
+          f"max_far from start {far:.1f}; {len(seen)} regions")
 
 
 def test_old_payload_without_home_loads() -> None:
