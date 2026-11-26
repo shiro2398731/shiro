@@ -60,6 +60,10 @@ MODULES = {
 # 与 headless.py 相同的启动方式：没有控制台、不继承句柄、独立进程组。
 FLAGS = 0x00000008 | 0x08000000           # DETACHED_PROCESS | CREATE_NO_WINDOW
 
+# 每个模块自己的 PUB 端口（CONTRACTS/00_overview.md §5）。
+# keeper 用它区分「进程死了」和「进程活着但卡了 30 秒」——后者再起一套会抢端口。
+PORTS = {"P1": 5561, "P2": 5562, "P3": 5563}
+
 EVENTS = LOGS / "keeper.jsonl"
 
 
@@ -94,6 +98,25 @@ def below_normal(pid: int) -> None:
             k32.CloseHandle(handle)
     except Exception:                                     # noqa: BLE001
         pass                                              # 降不下来不是停机的理由
+
+
+def port_open(port: int, timeout: float = 0.2) -> bool:
+    """True if something is listening on 127.0.0.1:port."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        return s.connect_ex(("127.0.0.1", int(port))) == 0
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def port_alive(tag: str) -> bool:
+    """该模块的端口是否还有人在听（= 进程还在，只是心跳没写）。"""
+    port = PORTS.get(tag)
+    return False if port is None else port_open(port)
 
 
 def start_module(tag: str) -> int:
@@ -209,6 +232,14 @@ def _watch(tags: list[str], now: float, w: Watcher) -> int:
 
         if not w.waiting(tag, now):
             age = beat_age(tag, now)
+            # 2026-11-26 19:46：心跳停了但端口还在听 = 进程卡住，不是死了。
+            # 再起一套会抢端口（那次 P3 崩溃 5 次、还闪出一个窗口）。先等它自己恢复。
+            if port_alive(tag):
+                event("port_held", tag=tag, port=PORTS.get(tag),
+                      stale_s=None if age is None else round(age, 1))
+                print(f"[keeper] {tag} 心跳 {('无' if age is None else f'{age:.0f}s')} "
+                      f"但端口还活着，不重起", flush=True)
+                continue
             try:
                 pid = start_module(tag)
             except Exception as exc:                      # noqa: BLE001
