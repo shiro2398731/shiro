@@ -992,6 +992,7 @@ class Stream:
                               self._home_x - self._st.x)), 1)),
             # 2026-11-26：AST（只读）——点火预测的 bits 与样本数。
             "attn_n": int(self.attention.observations),
+            "attn_acc": round(float(self.attention.accuracy), 4),
             "attn_bits": round(float(self.attention.bits_per_ignition), 4),
             "attn_base_bits": round(
                 float(self.attention.base_bits_per_ignition), 4),

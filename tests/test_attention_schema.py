@@ -85,7 +85,7 @@ def test_stream_wires_attention_without_changing_behaviour() -> None:
     if st.workspace.ignition_count:
         assert st2.attention.observations > 0, st2.attention.observations
     ss = st2.stream_state()
-    for k in ("attn_n", "attn_bits", "attn_base_bits", "attn_conf"):
+    for k in ("attn_n", "attn_acc", "attn_bits", "attn_base_bits", "attn_conf"):
         assert k in ss, k
     before = st2._step_count
     for _ in range(3):

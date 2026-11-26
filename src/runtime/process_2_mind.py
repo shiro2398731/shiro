@@ -516,6 +516,8 @@ def main() -> int:
                     "home_dist": ss["home_dist"],
                     # 2026-11-26：AST（点火预测）。bits 要跟 baseline 一起看。
                     "attn_n": int(ss["attn_n"]),
+                    "attn_acc": ss["attn_acc"],
+                    "attn_conf": ss["attn_conf"],
                     "attn_bits": ss["attn_bits"],
                     "attn_base_bits": ss["attn_base_bits"],
                     # 她的动作：谁选的、离开占多少。行动是她自己的，不是统计出来的。

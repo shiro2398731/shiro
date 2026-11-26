@@ -143,9 +143,14 @@ def main() -> int:
         if _an:
             _ab = snap.get("attn_bits")
             _bb = snap.get("attn_base_bits")
+            _aa = snap.get("attn_acc")
+            _ac = snap.get("attn_conf")
             print(f"  注意力     {_an} 次点火预测，bits "
                   f"{('—' if _ab is None else _ab)} vs 基线 "
                   f"{('—' if _bb is None else _bb)}  ← 越小越好")
+            if _aa is not None:
+                print(f"            命中 {_aa}，把握 {('—' if _ac is None else _ac)}"
+                      f"  ← 把握明显高于命中 = 过自信")
 
     if a.walk:
         print(f"\n  量她最近 {a.seconds:.0f} 秒走没走……")
