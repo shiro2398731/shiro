@@ -44,6 +44,7 @@ DWELL_MEMORY = 64
 from .adaptive_gain import ErrorDrivenGain
 from .grounding import GroundingTable
 from .self_model import OnlineSelfModel
+from .attention_schema import AttentionSchema
 from src.L3_memory import Consolidator, Recall, RecallEngine, TraceGraph
 from src.L4_drive import Drive
 from src.L4_drive.regulation import Regulation
@@ -158,6 +159,9 @@ class Stream:
         # the same self-model instead of a blank one.
         self.self_model = OnlineSelfModel()
         self.self_gain = ErrorDrivenGain()
+        # ---- AST：她对自己注意力的模型（只读，2026-11-26 加）----
+        # 学的是「上一次点火 → 下一次点火」的转移；不参与选择、不写回动力学。
+        self.attention = AttentionSchema()
         self._last_symbol: Optional[int] = None
 
         # ---- L6 grounding: what a region has meant, in her own terms ----
@@ -611,6 +615,9 @@ class Stream:
             self.landscape.state_space, self._st.x,
             datetime.now(timezone.utc).isoformat()
         )
+        # AST：点火发生了就喂给它（只学、只记比分，不改行为）。
+        if self._last_ignition is not None:
+            self.attention.observe(int(self._last_ignition.attractor_id))
 
         # L8: record structure. The interval is an observation resolution.
         if self._step_count % self._identity_every == 0:
@@ -983,6 +990,12 @@ class Stream:
             "home_dist": (None if self._home_x is None
                           else round(float(np.linalg.norm(
                               self._home_x - self._st.x)), 1)),
+            # 2026-11-26：AST（只读）——点火预测的 bits 与样本数。
+            "attn_n": int(self.attention.observations),
+            "attn_bits": round(float(self.attention.bits_per_ignition), 4),
+            "attn_base_bits": round(
+                float(self.attention.base_bits_per_ignition), 4),
+            "attn_conf": round(float(self.attention.mean_confidence), 4),
             "potential": (self.landscape.potential(st.x) if st is not None else 0.0),
             "n_attractors": len(ss),
             # 行动是她自己的，不是从外面看出来的统计量：记名字与比例。

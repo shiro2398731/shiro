@@ -394,6 +394,9 @@ def build_l5_payload(stream) -> dict:
             "observations": int(stream.self_gain.observations),
             "hits": int(stream.self_gain.hits),
         },
+        # 2026-11-26：AST（关于注意力的只读模型）。不存的话每次重启都要从零学，
+        # 而且 bits 基线会断掉——和 self_model 是同一个理由。
+        "attention": stream.attention.to_dict(),
         "last_symbol": (None if stream._last_symbol is None
                         else int(stream._last_symbol)),
         # L6 grounding: symbol -> referent counts. Part of her state: the labels
@@ -872,6 +875,12 @@ def apply_l5_payload(stream, payload: dict) -> None:
     ls_symbol = payload.get("last_symbol")
     stream._last_symbol = None if ls_symbol is None else int(ls_symbol)
 
+    # AST（关于注意力的只读模型）。旧存档没有：从空白开始，诚实。
+    att = payload.get("attention")
+    if att is not None:
+        from src.L5_cognition.attention_schema import AttentionSchema
+        stream.attention = AttentionSchema.from_dict(att)
+
     # L6 grounding. Missing in older checkpoints: every symbol starts as
     # "none", which is the honest state for a table that was never measured.
     if gr is not None:
@@ -893,6 +902,16 @@ def apply_l5_payload(stream, payload: dict) -> None:
     if isinstance(ws, dict):
         from src.L5_cognition.workspace import GlobalWorkspace
         stream.workspace = GlobalWorkspace.from_dict(ws)
+    # 2026-11-26：旧存档/首次接上时，用她自己的点火历史预热 AST。
+    # workspace.history 最多 1024 条，是已经发生的事；只读模型可以拿它学，
+    # 否则每次重启 AST 都从零开始（和 self_model 当年同一个坑）。
+    # 必须放在 workspace 恢复之后——否则这里看到的是空 history。
+    if stream.attention.observations == 0 and stream.workspace.ignition_count > 0:
+        for _ign in stream.workspace.history:
+            try:
+                stream.attention.observe(int(_ign.attractor_id))
+            except (TypeError, ValueError):
+                continue
 
     # Continue her random stream instead of starting a new one. Restoring the
     # bit-generator state (not just born_seed) is what makes two loads of the

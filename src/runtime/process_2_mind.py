@@ -514,6 +514,10 @@ def main() -> int:
                     # 2026-11-25：回家规则（A1 候选④）——目标与离家距离。
                     "leave_target": ss["leave_target"],
                     "home_dist": ss["home_dist"],
+                    # 2026-11-26：AST（点火预测）。bits 要跟 baseline 一起看。
+                    "attn_n": int(ss["attn_n"]),
+                    "attn_bits": ss["attn_bits"],
+                    "attn_base_bits": ss["attn_base_bits"],
                     # 她的动作：谁选的、离开占多少。行动是她自己的，不是统计出来的。
                     "action": ss["action"],
                     "leave_share": ss["leave_share"],
