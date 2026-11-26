@@ -510,7 +510,10 @@ def main() -> int:
                     # 区域 uid（-1 = 没点火），`ignitions` 是本次进程累计点火数。
                     # 之前这两个数不进快照，日志里查不到「她注意什么」。
                     "ignition": int(ss["ignition"]),
-                    "ignitions": int(stream.workspace.ignition_count),
+                    # 2026-11-27：ignitions 以前是 len(history)，被 HISTORY_CAP=1024
+                    # 卡死；ignition_count 仍是「最近缓冲长度」，累计用 total_ignitions。
+                    "ignitions": int(stream.workspace.total_ignitions),
+                    "ignition_hist": int(stream.workspace.ignition_count),
                     # 2026-11-25：回家规则（A1 候选④）——目标与离家距离。
                     "leave_target": ss["leave_target"],
                     "home_dist": ss["home_dist"],

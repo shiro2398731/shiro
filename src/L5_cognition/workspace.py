@@ -92,6 +92,9 @@ class GlobalWorkspace:
         self._strength_hist: collections.deque = collections.deque(maxlen=history_len)
         self._current: Optional[Ignition] = None
         self.history: collections.deque = collections.deque(maxlen=HISTORY_CAP)
+        # 2026-11-27：`ignition_count` 是 len(history)，会被 HISTORY_CAP 卡在 1024。
+        # 快照里的「点火累计」得用这个数，否则重起后永远显示 1024。
+        self.total_ignitions: int = 0
 
         self._active_mu: Optional[np.ndarray] = None
         self._active_sigma: float = 0.0
@@ -180,6 +183,7 @@ class GlobalWorkspace:
         )
         self._current = ign
         self.history.append(ign)
+        self.total_ignitions += 1
         return ign
 
     # ---------- observation ----------
@@ -216,6 +220,7 @@ class GlobalWorkspace:
 
     @property
     def ignition_count(self) -> int:
+        """Recent ignitions kept (≤ HISTORY_CAP). For lifetime use total_ignitions."""
         return len(self.history)
 
     # ---------- persistence ----------
@@ -243,6 +248,7 @@ class GlobalWorkspace:
         return {
             "strength_hist": [float(v) for v in self._strength_hist],
             "history": [_ign(i) for i in self.history],
+            "total_ignitions": int(self.total_ignitions),
             "current": _ign(self._current),
             "active_mu": (None if self._active_mu is None
                           else [float(v) for v in self._active_mu]),
@@ -266,6 +272,8 @@ class GlobalWorkspace:
                 t_event=str(rec.get("t_event", "")),
             ))
         cur = data.get("current")
+        # 旧存档没有 total_ignitions：至少还有 history 的长度可用，别报 0。
+        g.total_ignitions = int(data.get("total_ignitions", len(g.history)))
         if isinstance(cur, dict):
             g._current = Ignition(
                 attractor_id=int(cur.get("attractor_id", -1)),
