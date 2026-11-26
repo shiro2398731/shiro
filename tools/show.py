@@ -138,6 +138,14 @@ def main() -> int:
               f"  目标 {('—' if _lt is None else _lt)}"
               f"  点火累计 {snap.get('ignitions', '—')}"
               f"  转移 {snap.get('transitions', '—')}")
+        # 2026-11-26：AST（只读注意力模型）上线后，一行看 bits 有没有压过基线。
+        _an = snap.get("attn_n")
+        if _an:
+            _ab = snap.get("attn_bits")
+            _bb = snap.get("attn_base_bits")
+            print(f"  注意力     {_an} 次点火预测，bits "
+                  f"{('—' if _ab is None else _ab)} vs 基线 "
+                  f"{('—' if _bb is None else _bb)}  ← 越小越好")
 
     if a.walk:
         print(f"\n  量她最近 {a.seconds:.0f} 秒走没走……")
