@@ -45,6 +45,8 @@ from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / "data" / "logs"
+# 2026-11-28：测试/维护时放这个文件，keeper 暂停重启（只记录，不杀不启）。
+HOLD_FILE = ROOT / "data" / "state" / "keeper.hold"
 
 PY = ROOT / ".venv" / "Scripts" / "python.exe"
 if not PY.exists():                       # non-Windows layout
@@ -211,8 +213,20 @@ class Watcher:
         return None
 
 
+def _held() -> bool:
+    """测试/维护期间放 keeper.hold -> 暂停重启，避免把 CPU 饿出来的假死当真死。"""
+    return HOLD_FILE.exists()
+
+
 def _watch(tags: list[str], now: float, w: Watcher) -> int:
     """一拍：检查、记录存活、起死掉的、判定熔断。返回给出的退出码（0 表示继续）。"""
+    if _held():
+        if not getattr(w, "held_noted", False):
+            event("held", tags=tags)
+            print("[keeper] keeper.hold 存在：暂停重启（测试/维护中）", flush=True)
+            w.held_noted = True
+        return 0
+    w.held_noted = False
     for tag in tags:
         if tag in w.given_up:
             continue

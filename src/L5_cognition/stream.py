@@ -141,8 +141,8 @@ class Stream:
         # Attached here rather than inside StateSpace so the state space stays
         # a pure potential field; the modulation is a separate layer.
         self.regulation = Regulation()
-        # The traversability edge is off unless explicitly enabled. See step().
-        self._wall_enabled = False
+        # 2026-11-28：traversability edge（wall）经实测会推远状态（6→150 σ），
+        # 已从机制里移除；不再保留永不生效的 _wall_enabled 开关。
 
         # ---- L8 identity: the subset that survives perturbation ----
         self.identity = Identity()
@@ -624,17 +624,9 @@ class Stream:
             # structure can no longer hold a state is derived from the depths
             # it currently maintains.
             #
-            # Disabled by default. Measured: with the edge active, the fraction
-            # of regions below their own carrying level fell from 0.94 to 0.60,
-            # but the distance the state covered grew from 6 to 150 region
-            # scales. The edge pushes the state away from thin regions instead
-            # of letting it settle, which is the opposite of what resilience
-            # means (absorbing disturbance, not deflecting it).
-            if self._wall_enabled:
-                self.landscape.state_space.set_wall(
-                    self.regulation.viability.wall(ss))
-            else:
-                self.landscape.state_space.set_wall(None)
+            # 2026-11-28：wall 机制已删（曾经测到：开启后状态被推远 6→150 σ）。
+            # 每步显式清空，保持与「默认不启用」完全一致的行为。
+            self.landscape.state_space.set_wall(None)
 
         # 结构可能变了（recover 删过区域、或刚刚合并过）。现在**没有编号要改**：
         # detector 发布的是区域的名字，图与指代表存的是名字，预演序列也是名字。
