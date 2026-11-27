@@ -51,7 +51,6 @@ from src.L3_memory import Consolidator, Recall, RecallEngine, TraceGraph
 from src.L4_drive import Drive
 from src.L4_drive.regulation import Regulation
 from src.L5_cognition.rest import RestField
-from src.L5_cognition.swing import Swing
 from src.L8_identity import Identity
 
 
@@ -294,7 +293,8 @@ class Stream:
         # 原来关着（"measurement rather than a preference, but not attached by default"），
         # 白默 2026-11-20 问「草履虫会好奇吗」之后分清：疲劳是机制，好奇是意识。
         self._use_rest = True
-        self._use_swing = False
+        # 2026-11-27：swing 消融无收益（见上面的表），这里不再挂对象、也没有开关。
+        # `src/L5_cognition/swing.py` 保留（可单独实验），但 Stream 不再创建它。
 
         # ── 有限性（2026-11-20 夜，最小版：只记录，不致死）────────────
         # 白默：「草履虫会好奇吗？」——不会。草履虫有趋化，也会耗尽。
@@ -343,7 +343,7 @@ class Stream:
         self._max_travel = 0.0
         self.rest = RestField()
         self._rest_every = 1
-        self.swing = Swing(dim=dim)
+        # swing 不再挂载（2026-11-27，见 __init__ 说明）。
 
         # L4's tilt is set from the structure's own gradient scale rather than
         # from a unit length. Sampled once the first step has happened, since
@@ -519,14 +519,7 @@ class Stream:
             surprise=self.last_surprise,
         )
 
-        # Swing advances from the position the state is in now, before the
-        # next step uses its tilt. Off by default; see __init__.
-        if self._use_swing:
-            self.swing.observe_gradient(
-                float(np.linalg.norm(self.landscape.gradient(self._st.x)))
-            )
-            self.swing.step(self._st.x)
-            self.landscape.set_swing(self.swing.tilt())
+        # Swing 已从 Stream 移除（2026-11-27，消融无收益；模块保留供单独实验）。
 
         # Give the drive the same scale as the structure's own pull. Sampled
         # over the first steps rather than once: a single gradient magnitude
