@@ -48,6 +48,30 @@ def _boot() -> Stream:
     return st
 
 
+def test_home_radius_is_a_knob_default_4() -> None:
+    """家半径是实验旋钮，默认必须还是 4σ（行为不变）。"""
+    st = _boot()
+    assert st.home_radius_sigmas == 4.0, st.home_radius_sigmas
+    print(f"       home_radius_sigmas default = {st.home_radius_sigmas}")
+
+
+def test_home_radius_knob_bounds_excursion() -> None:
+    """旋钮真的生效：1σ 时，离家距离不会超过 ~2σ+一步。"""
+    st = _boot()
+    st.home_radius_sigmas = 1.0
+    st.force_action = LEAVE
+    worst = 0.0
+    for _ in range(120):
+        st.landscape.set_noise_amplitude(0.1957)
+        st.step()
+        scale_now = st._own_scale()
+        if st._home_x is not None and scale_now:
+            hd = float(np.linalg.norm(st._home_x - st._st.x))
+            worst = max(worst, hd / float(scale_now))
+    assert worst <= 2.6, worst
+    print(f"       1σ knob: worst home_dist/σ = {worst:.2f}")
+
+
 def test_leave_target_is_chosen_and_kept() -> None:
     """ActionGate：选中的目标会被记住；下一次带着它走，不会换。"""
     g = ActionGate()

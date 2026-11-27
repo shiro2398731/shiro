@@ -229,6 +229,9 @@ class Stream:
         # 回到离它 1σ 内就清空，下次出门重新设。`_leave_target` 是正走向的目标，
         # 到它的半径内才换。两个都是「她身体的状态」，不是判据。
         self._home_x: Optional[np.ndarray] = None
+        # 2026-11-27：家半径为实验旋钮（默认 4σ，行为不变）。
+        # 副本实验用它比较「4σ=604」和「6σ=906」能不能够到更远的目标。
+        self.home_radius_sigmas: float = 4.0
         self._leave_target: Optional[int] = None
         # 只给 tools/intervene.py 用：强制某一边，用来做 do(a) 对照。
         self.force_action = None
@@ -850,7 +853,7 @@ class Stream:
             _hd = float(np.linalg.norm(_back))
             if _hd <= float(scale):
                 self._home_x = None          # 回到家：这次外出结束
-            elif _hd > 4.0 * float(scale):
+            elif _hd > float(self.home_radius_sigmas) * float(scale):
                 self._leave_target = None    # 越界：目标作废，先回家
                 _home_dir = _back / _hd * float(scale)
         if self._home_x is None:
