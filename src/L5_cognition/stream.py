@@ -234,6 +234,10 @@ class Stream:
         # 2026-11-27：家半径为实验旋钮（默认 4σ，行为不变）。
         # 副本实验用它比较「4σ=604」和「6σ=906」能不能够到更远的目标。
         self.home_radius_sigmas: float = 4.0
+        # 2026-11-27（实验开关，默认关）：目标候选按家半径过滤。
+        # True 时 direction 只选「离家 <= home_radius_sigmas*scale」的候选；
+        # 默认 False = 完全旧行为。副本实验《2026-11-27_目标选择提案》用它。
+        self.filter_targets_by_home: bool = False
         self._leave_target: Optional[int] = None
         # 只给 tools/intervene.py 用：强制某一边，用来做 do(a) 对照。
         self.force_action = None
@@ -880,7 +884,10 @@ class Stream:
                 places=places,
                 prefer_far=(len(set(self._arrival_hist)) <= 3
                             and len(self._arrival_hist) >= 4),
-                preferred_target=self._leave_target)
+                preferred_target=self._leave_target,
+                home=self._home_x if self.filter_targets_by_home else None,
+                max_home_dist=(float(self.home_radius_sigmas) * float(scale)
+                               if self.filter_targets_by_home else None))
             if d is not None:
                 self._leave_target = self.actions.last_target
         if d is not None:

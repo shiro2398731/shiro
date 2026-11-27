@@ -52,7 +52,9 @@ def test_home_radius_is_a_knob_default_4() -> None:
     """家半径是实验旋钮，默认必须还是 4σ（行为不变）。"""
     st = _boot()
     assert st.home_radius_sigmas == 4.0, st.home_radius_sigmas
-    print(f"       home_radius_sigmas default = {st.home_radius_sigmas}")
+    assert st.filter_targets_by_home is False, st.filter_targets_by_home
+    print(f"       home_radius_sigmas default = {st.home_radius_sigmas}; "
+          f"target filter off")
 
 
 def test_home_radius_knob_bounds_excursion() -> None:

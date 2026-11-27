@@ -81,7 +81,9 @@ class ActionGate:
                   visited: Optional[Sequence] = None,
                   places: Optional[Sequence] = None,
                   prefer_far: bool = False,
-                  preferred_target: Optional[int] = None) -> Optional[np.ndarray]:
+                  preferred_target: Optional[int] = None,
+                  home: Optional[np.ndarray] = None,
+                  max_home_dist: Optional[float] = None) -> Optional[np.ndarray]:
         """离开的方向。
 
         2026-11-17 改过：**指向最近的另一个区域，不是背离质心。**
@@ -119,6 +121,14 @@ class ActionGate:
                 d = cand - x
                 dist = np.linalg.norm(d, axis=1)
                 dist[~np.isfinite(dist)] = np.inf
+                # 2026-11-27（实验开关，默认关）：目标候选按「离家距离」过滤。
+                # 提案《2026-11-27_目标选择提案》的候选过滤：只保留
+                # dist(home→候选) <= max_home_dist 的区域再选。默认 home=None，
+                # 行为和以前完全一样；副本实验才传。
+                home_ok = None
+                if home is not None and max_home_dist is not None:
+                    hd = np.linalg.norm(cand - np.asarray(home, dtype=float), axis=1)
+                    home_ok = hd <= float(max_home_dist)
 
                 # 2026-11-25：目标持久化。还没到就继续朝同一个目标走。
                 # 不加这条，每次 LEAVE 都重选，一步 151.5 永远只够到最近的那个区域
@@ -131,8 +141,9 @@ class ActionGate:
                         if places[k] != _pref:
                             continue
                         if np.isfinite(dist[k]) and dist[k] > 0:
-                            self.last_target = places[k]
-                            return d[k] / dist[k] * min(s, float(dist[k]))
+                            if home_ok is None or home_ok[k]:
+                                self.last_target = places[k]
+                                return d[k] / dist[k] * min(s, float(dist[k]))
                         break
 
                 # ── 2026-11-17 23:05：优先去「她还没去过的」区域 ──
@@ -220,7 +231,8 @@ class ActionGate:
                     _floor = s / 2
                     fresh = [k for k in range(len(place_keys))
                              if place_keys[k] not in vis
-                             and np.isfinite(dist[k]) and _floor <= dist[k] <= reach]
+                             and np.isfinite(dist[k]) and _floor <= dist[k] <= reach
+                             and (home_ok is None or home_ok[k])]
                     if fresh:
                         # 2026-11-19 17:35：**卡住就脱困**（机制，不是概率）。
                         #
@@ -259,10 +271,15 @@ class ActionGate:
                 _vis = set(visited or ()) if (visited is not None and places is not None) else set()
                 if _vis and places is not None:
                     _pos = [k for k in range(len(places))
-                            if np.isfinite(dist[k]) and dist[k] >= s and places[k] not in _vis]
+                            if np.isfinite(dist[k]) and dist[k] >= s
+                            and places[k] not in _vis
+                            and (home_ok is None or home_ok[k])]
                     _pos = np.asarray(_pos, dtype=int)
                 else:
-                    _pos = np.where(np.isfinite(dist) & (dist >= s))[0]
+                    _mask = np.isfinite(dist) & (dist >= s)
+                    if home_ok is not None:
+                        _mask &= home_ok
+                    _pos = np.where(_mask)[0]
                 if _pos.size:
                     j = int(_pos[np.argmin(dist[_pos])])
                     unit = d[j] / dist[j]
