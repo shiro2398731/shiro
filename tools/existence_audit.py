@@ -90,15 +90,24 @@ def _nn_median(mus: np.ndarray, chunk: int = 256) -> float:
 def _visited_hits(st, mus: np.ndarray) -> int:
     """「她去过的地方」能不能对上「区域」。
 
-    2026-11-18 下午的病灶就是这里：两边都用 round(·,4) 的键，但一边是她**站的位置**、
-    另一边是区域**质心**，而她的落点永远差 0.0077 没到质心 —— 实测交集 0。
-    这个数为 0，说明「去没去过的区域」这个策略一次都没生效过。
+    2026-11-17 之后 `_visited_places` 存的是**区域 uid（int）**，不是位置 tuple
+    （见 stream.py 与 persist.py）。这个函数以前还拿质心 tuple 去对，所以恒为 0——
+    2026-11-27 修：按 uid 对；老存档里的 tuple 顺手也按位置对一次。
     """
     visited = set(getattr(st, "_visited_places", None) or ())
     if not visited:
         return 0
+    space = st.landscape.state_space
+    uids = {int(getattr(a, "uid", -1)) for a in space.attractors()}
     places = {tuple(np.round(np.asarray(m, dtype=float), 4).tolist()) for m in mus}
-    return len(visited & places)
+    by_uid = {int(v) for v in visited if isinstance(v, int)}
+    by_pos = set()
+    if len(mus):
+        dim = len(mus[0])
+        for v in visited:
+            if isinstance(v, (tuple, list)) and len(v) == dim:
+                by_pos.add(tuple(np.round(np.asarray(v, dtype=float), 4).tolist()))
+    return len(by_uid & uids) + len(by_pos & places)
 
 
 def _pair_stats(mus: np.ndarray, chunk: int = 256) -> dict:
