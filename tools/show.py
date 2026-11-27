@@ -153,6 +153,10 @@ def main() -> int:
                 print(f"            命中 {_aa}，把握 {('—' if _ac is None else _ac)}，"
                       f"近期 {('—' if _ar is None else _ar)} bits"
                       f"  ← 把握明显高于命中 = 过自信")
+        _gr = snap.get("gwt_reasons")
+        if _gr:
+            _txt = " / ".join(f"{k} {v}" for k, v in sorted(_gr.items()))
+            print(f"  点火原因   {_txt}  ← 近 512 步：sustain 停着 / below_ref 没过线")
 
     if a.walk:
         print(f"\n  量她最近 {a.seconds:.0f} 秒走没走……")
