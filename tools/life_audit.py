@@ -173,14 +173,28 @@ def main() -> int:
         print(f"  {mark(cl['closure_ok'])}2 稳态      闭环 {cl['closure_ok']}"
               f"（corr 中位 {cl['corr']}，n={cl['n']}；判据 corr < 0.05 算没断）")
 
-    # 3) 休息：**暂时测不了**。
+    # 3) 休息：rest 场到底接没接，要问 Stream，不要看源码行号。
     #
-    # 原来这一条用 HOLD 占比，但 HOLD = 1 - leave，和第 1 条是同一个数的两面。
-    # 真正的休息在 `src/L5_cognition/rest.py`（RestField），但 `stream.py:232` 写着
-    # `self._use_rest = False`——**默认没接**。要测它，得先把休息场接上（改行为，等白默定）。
-    print("  -- 3 休息      测不了：rest.py 的休息场默认没接（stream.py:232 _use_rest=False）")
+    # 2026-11-20 夜 `_use_rest` 已经接上（True）：待久了的区域深度变浅（depth*(1-u)），
+    # 这是「趋性」不是「行为规则」。这条工具以前硬编码 stream.py:232 `_use_rest=False`，
+    # 早已过期——2026-11-27 改成动态问 Stream。
+    if _rest_wired():
+        hs = ac.get("hold_share") if isinstance(ac, dict) else None
+        print(f"  {mark(True)}3 休息      已接（_use_rest=True）：HOLD "
+              f"{hs if hs is not None else '—'}，rest 场参与 depth*(1-u)")
+    else:
+        print("  -- 3 休息      rest 场的 _use_rest 为 False（默认没接）")
     print()
     return 0
+
+
+def _rest_wired() -> bool:
+    """rest 场有没有接进行为（动态问 Stream，不看源码行号）。"""
+    try:
+        from src.L5_cognition.stream import Stream
+        return bool(getattr(Stream(), "_use_rest", False))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 if __name__ == "__main__":
