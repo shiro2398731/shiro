@@ -229,6 +229,8 @@ class Stream:
         # 回到离它 1σ 内就清空，下次出门重新设。`_leave_target` 是正走向的目标，
         # 到它的半径内才换。两个都是「她身体的状态」，不是判据。
         self._home_x: Optional[np.ndarray] = None
+        # 2026-11-27：最近 512 步的 GWT 原因计数（观测用；不落盘）。
+        self._gwt_reasons: collections.deque = collections.deque(maxlen=512)
         # 2026-11-27：家半径为实验旋钮（默认 4σ，行为不变）。
         # 副本实验用它比较「4σ=604」和「6σ=906」能不能够到更远的目标。
         self.home_radius_sigmas: float = 4.0
@@ -621,6 +623,8 @@ class Stream:
         # AST：点火发生了就喂给它（只学、只记比分，不改行为）。
         if self._last_ignition is not None:
             self.attention.observe(int(self._last_ignition.attractor_id))
+        # 2026-11-27：这一步为什么没点火（只做观测窗口，不影响判定）。
+        self._gwt_reasons.append(getattr(self.workspace, "_last_reason", ""))
 
         # L8: record structure. The interval is an observation resolution.
         if self._step_count % self._identity_every == 0:
@@ -993,6 +997,9 @@ class Stream:
             "home_dist": (None if self._home_x is None
                           else round(float(np.linalg.norm(
                               self._home_x - self._st.x)), 1)),
+            # 2026-11-27：最近 512 步的概率事件计数——安静时看是 sustain 还是 below_ref。
+            "gwt_reasons": dict(collections.Counter(
+                r for r in self._gwt_reasons if r)),
             # 2026-11-26：AST（只读）——点火预测的 bits 与样本数。
             "attn_n": int(self.attention.observations),
             "attn_acc": round(float(self.attention.accuracy), 4),

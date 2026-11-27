@@ -524,6 +524,8 @@ def main() -> int:
                     "attn_bits": ss["attn_bits"],
                     "attn_bits_recent": ss["attn_bits_recent"],
                     "attn_base_bits": ss["attn_base_bits"],
+                    # 2026-11-27：安静时看 GWT 原因分布（sustain/below_ref/...）。
+                    "gwt_reasons": ss["gwt_reasons"],
                     # 她的动作：谁选的、离开占多少。行动是她自己的，不是统计出来的。
                     "action": ss["action"],
                     "leave_share": ss["leave_share"],

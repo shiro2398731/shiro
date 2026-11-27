@@ -99,6 +99,10 @@ class GlobalWorkspace:
         self._active_mu: Optional[np.ndarray] = None
         self._active_sigma: float = 0.0
         self._active_id: Optional[int] = None
+        # 2026-11-27：这一步为什么没点火（观测用，不影响判定）。
+        # "sustain" 维持中 / "below_ref" 强度没过线 / "no_attr" 没有区域 /
+        # "warmup" 强度史还空 / "ignite" 点了。
+        self._last_reason: str = ""
 
     # ---------- strength ----------
 
@@ -126,6 +130,7 @@ class GlobalWorkspace:
         if self._active_mu is not None and self._active_sigma > 0:
             d = float(np.linalg.norm(x - self._active_mu))
             if d <= self._active_sigma:
+                self._last_reason = "sustain"
                 return None
             self._active_mu = None
             self._active_sigma = 0.0
@@ -133,6 +138,7 @@ class GlobalWorkspace:
 
         attrs = state_space.attractors()
         if not attrs:
+            self._last_reason = "no_attr"
             return None
 
         # Reuse the state space's cached centroid and scale matrices instead of
@@ -165,9 +171,11 @@ class GlobalWorkspace:
         self._strength_hist.append(best)
 
         if ref is None:
+            self._last_reason = "warmup"
             return None
 
         if best <= ref or best <= 1e-12:
+            self._last_reason = "below_ref"
             return None
 
         a = attrs[best_i]
@@ -184,6 +192,7 @@ class GlobalWorkspace:
         self._current = ign
         self.history.append(ign)
         self.total_ignitions += 1
+        self._last_reason = "ignite"
         return ign
 
     # ---------- observation ----------
