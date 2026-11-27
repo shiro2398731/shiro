@@ -108,6 +108,12 @@ class Deliberation:
         # 稳健裁剪：单个量的异常不许统治总分
         return float(np.clip(z, -5.0, 5.0))
 
+    def _energy(self, stream) -> float:
+        """她的能量：如果 Stream 接了真代谢，就用同一个能量（不搞两套）。"""
+        if getattr(stream, "use_metabolism", False):
+            return float(getattr(stream, "energy", 1.0))
+        return float(self.energy)
+
     def _signals(self, stream, x: np.ndarray, current_uid: Optional[int],
                  target_uid: Optional[int], stay: bool = False) -> dict:
         space = stream.landscape.state_space
@@ -278,18 +284,20 @@ class Deliberation:
 
         # ── v5：按「领地年龄 / 路程」选（实验模式）──
         if self.value_mode:
-            if self.energy_mode and self.energy <= self.energy_floor:
+            _e = self._energy(stream)
+            _floor = (float(getattr(stream, "metabolism_floor", self.energy_floor))
+                      if getattr(stream, "use_metabolism", False)
+                      else self.energy_floor)
+            if self.energy_mode and _e <= _floor:
                 # 低能量：朝她自己停留最多的中心走回去（不是我们设的家）
                 if self.center is not None:
                     dc = float(np.linalg.norm(self.center - x))
                     if dc > 2.0 * scale:
                         unit = (self.center - x) / dc
-                        self.energy = max(0.0, self.energy - self.energy_cost * 0.5)
-                        self.last = {"reason": "return", "energy": self.energy,
+                        self.last = {"reason": "return", "energy": _e,
                                      "candidates": []}
                         return LEAVE, unit * scale, self.last
-                self.energy = min(1.0, self.energy + self.energy_gain)
-                self.last = {"reason": "recover", "energy": self.energy,
+                self.last = {"reason": "recover", "energy": _e,
                              "candidates": []}
                 return HOLD, None, self.last
             best = None
@@ -306,23 +314,24 @@ class Deliberation:
                 value = float(age) / (
                     1.0 + (d / max(scale, 1e-12)) ** self.value_power)
                 if self.energy_mode:
-                    # 自己的能量：低能量时探索欲下降
-                    value *= max(0.05, self.energy)
+                    # 自己的能量：低能量时探索欲下降（接真代谢时用同一个能量）
+                    energy_now = self._energy(stream)
+                    value *= max(0.05, energy_now)
                     # 自己的领地中心：低能量时更想回来
                     if self.center is not None:
                         dc = float(np.linalg.norm(self.center - x))
-                        value -= 2.0 * (dc / max(scale, 1e-12)) * (1.0 - self.energy)
+                        value -= 2.0 * (dc / max(scale, 1e-12)) * (1.0 - energy_now)
                 if best is None or value > best[0]:
                     best = (value, (mu - x) / d, uid, d)
             if best is not None and best[3] > 1e-12:
                 self.intent = {"uid": best[2], "score": best[0]}
                 self.unrest *= self.unrest_after
                 step = min(scale, best[3])
-                if self.energy_mode:
+                if self.energy_mode and not getattr(stream, "use_metabolism", False):
                     self.energy = max(0.0, self.energy
                                       - self.energy_cost * (step / scale))
                 self.last = {"reason": "value_mode", "intent": self.intent,
-                             "candidates": [], "energy": self.energy}
+                             "candidates": [], "energy": self._energy(stream)}
                 return LEAVE, best[1] * step, self.last
             self.unrest += self.unrest_rate
             self.last = {"reason": "value_mode_none", "candidates": []}

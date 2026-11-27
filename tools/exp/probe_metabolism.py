@@ -31,6 +31,11 @@ def run(mode: str):
     st._leave_target = None
     if mode == "metabolism":
         st.use_metabolism = True
+    if mode == "delib_metabolism":
+        st.use_metabolism = True
+        st.use_deliberation = True
+        st.deliberation.value_mode = True
+        st.deliberation.energy_mode = True
     x0 = np.asarray(st._st.x, dtype=float).copy()
     r0 = len(st.landscape.state_space.attractors())
     seen = set()
@@ -60,3 +65,4 @@ if not os.path.exists(FIXED):
     shutil.copyfile(os.path.join("data", "state", "l5.pkl"), FIXED)
 print("rules     ", run("rules"))
 print("metabolism", run("metabolism"))
+print("delib+met ", run("delib_metabolism"))
