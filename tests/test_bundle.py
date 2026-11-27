@@ -23,11 +23,12 @@ os.chdir(ROOT)
 
 from src.common import bundle, epoch, persist  # noqa: E402
 from src.L5_cognition.stream import Stream  # noqa: E402
-from src.runtime.process_1_fast import FHNNetwork, L1Predictor, L2StateField  # noqa: E402
+from src.runtime.process_1_fast import FHNNetwork, L2StateField
+from src.runtime.prediction import OnlinePredictor  # noqa: E402
 
 
 def _live() -> dict:
-    net, pred, field = FHNNetwork(), L1Predictor(), L2StateField()
+    net, pred, field = FHNNetwork(), OnlinePredictor(), L2StateField()
     persist.restore_all({"l0": net, "l1": pred, "l2": field, "acc": net.accumulator})
     stream = Stream()
     persist.restore_all({"l5": stream})
@@ -65,7 +66,7 @@ def test_unpack_reproduces_the_same_body_and_future() -> None:
         bundle.pack(src, path)
         payload = bundle.load(path)
 
-        dst = {"net": FHNNetwork(), "pred": L1Predictor(), "field": L2StateField(),
+        dst = {"net": FHNNetwork(), "pred": OnlinePredictor(), "field": L2StateField(),
                "acc": None, "stream": Stream()}
         dst["acc"] = dst["net"].accumulator
         bundle.apply(dst, payload, journal_path=pathlib.Path(d) / "l5.wal")

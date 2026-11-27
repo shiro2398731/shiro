@@ -15,13 +15,13 @@ import numpy as np
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.runtime.process_1_fast import L1Predictor  # noqa: E402
+from src.runtime.prediction import OnlinePredictor  # noqa: E402
 
 DIM = 100
 
 
 def test_surprise_drops_on_predictable_input() -> None:
-    pred = L1Predictor(input_dim=DIM, seed=7)
+    pred = OnlinePredictor(input_dim=DIM, seed=7)
     base = np.linspace(-1, 1, DIM)
     errs = []
     for i in range(800):
@@ -35,7 +35,7 @@ def test_surprise_drops_on_predictable_input() -> None:
 
 
 def test_surprise_finite() -> None:
-    pred = L1Predictor(input_dim=DIM, seed=7)
+    pred = OnlinePredictor(input_dim=DIM, seed=7)
     rng = np.random.default_rng(0)
     for _ in range(100):
         s = float(pred.step(rng.normal(size=DIM)))

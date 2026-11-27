@@ -20,10 +20,11 @@ from . import bundle, epoch, persist
 
 def _live_from_checkpoints():
     """从磁盘检查点构造五层对象（只读，不触碰运行中的进程）。"""
-    from src.runtime.process_1_fast import FHNNetwork, L1Predictor, L2StateField
+    from src.runtime.process_1_fast import FHNNetwork, L2StateField
+    from src.runtime.prediction import OnlinePredictor
     from src.L5_cognition.stream import Stream
 
-    net, pred, field = FHNNetwork(), L1Predictor(), L2StateField()
+    net, pred, field = FHNNetwork(), OnlinePredictor(), L2StateField()
     persist.restore_all({"l0": net, "l1": pred, "l2": field, "acc": net.accumulator})
     stream = Stream()
     persist.restore_all({"l5": stream})

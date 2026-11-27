@@ -27,12 +27,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.common import bundle, epoch, persist, rolling  # noqa: E402
-from src.runtime.process_1_fast import FHNNetwork, L1Predictor, L2StateField  # noqa: E402
+from src.runtime.process_1_fast import FHNNetwork, L2StateField
+from src.runtime.prediction import OnlinePredictor  # noqa: E402
 from src.L5_cognition.stream import Stream  # noqa: E402
 
 
 def _live_objects() -> dict:
-    net, pred, field = FHNNetwork(), L1Predictor(), L2StateField()
+    net, pred, field = FHNNetwork(), OnlinePredictor(), L2StateField()
     persist.restore_all({"l0": net, "l1": pred, "l2": field, "acc": net.accumulator})
     stream = Stream()
     persist.restore_all({"l5": stream})
@@ -81,7 +82,7 @@ def cmd_unpack(args) -> int:
               f"until {st.lease_until}. Pass --take-over to move her here.")
         return 2
 
-    objs = {"net": FHNNetwork(), "pred": L1Predictor(), "field": L2StateField(),
+    objs = {"net": FHNNetwork(), "pred": OnlinePredictor(), "field": L2StateField(),
             "acc": None, "stream": Stream()}
     objs["acc"] = objs["net"].accumulator
     payload = bundle.load(args.bundle)
