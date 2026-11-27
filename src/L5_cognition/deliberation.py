@@ -66,6 +66,10 @@ class Deliberation:
         # 是 deliberation 内部记的「我去过哪」。
         self.seen = {}
         self.step_index = 0
+        # v5（实验）：不按五量等权，而按「这块地多久没去」的价值选目标；
+        # 路程用自己的步长折算。value = age / (1 + dist/scale)。
+        self.value_mode = False
+        self.value_power = 2.0  # 路程折算的幂（实验）
 
     # ---------- 她自己的量 ----------
 
@@ -205,6 +209,32 @@ class Deliberation:
             novel = allc[:4]
         cand = near + [t for t in novel if t[1] not in {u[1] for u in near}]
         cand = cand[: self.max_candidates]
+
+        # ── v5：按「领地年龄 / 路程」选（实验模式）──
+        if self.value_mode:
+            best = None
+            for i, a in enumerate(attrs):
+                mu = np.asarray(a.mu, dtype=float)
+                d = float(np.linalg.norm(mu - x))
+                if d <= 1e-12:
+                    continue
+                uid = int(getattr(a, "uid", i))
+                # 没去过 = 很老（用她自己的步数做年龄上限，不用外部常数）
+                age = self.step_index - self.seen.get(uid, -self.step_index)
+                value = float(age) / (
+                    1.0 + (d / max(scale, 1e-12)) ** self.value_power)
+                if best is None or value > best[0]:
+                    best = (value, (mu - x) / d, uid, d)
+            if best is not None and best[3] > 1e-12:
+                self.intent = {"uid": best[2], "score": best[0]}
+                self.unrest *= self.unrest_after
+                self.last = {"reason": "value_mode", "intent": self.intent,
+                             "candidates": []}
+                step = min(scale, best[3])
+                return LEAVE, best[1] * step, self.last
+            self.unrest += self.unrest_rate
+            self.last = {"reason": "value_mode_none", "candidates": []}
+            return HOLD, None, self.last
 
         # ── v3：先看她憋没憋够 ──
         if self.intent is None and self.unrest < self.unrest_left:
