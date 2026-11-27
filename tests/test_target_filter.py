@@ -51,6 +51,34 @@ def test_all_filtered_does_not_pick_outside() -> None:
     print("       all filtered -> no target")
 
 
+def test_env_can_enable_filter() -> None:
+    """环境变量开关：默认关；SHIRO_TARGET_FILTER=1 时打开，半径可覆盖。"""
+    import os
+
+    from src.L5_cognition.stream import Stream
+
+    old1 = os.environ.get("SHIRO_TARGET_FILTER")
+    old2 = os.environ.get("SHIRO_TARGET_FILTER_SIGMAS")
+    try:
+        os.environ["SHIRO_TARGET_FILTER"] = "1"
+        os.environ["SHIRO_TARGET_FILTER_SIGMAS"] = "3.0"
+        st = Stream()
+        assert st.filter_targets_by_home is True
+        assert abs(st.target_filter_sigmas - 3.0) < 1e-9, st.target_filter_sigmas
+        os.environ.pop("SHIRO_TARGET_FILTER", None)
+        os.environ.pop("SHIRO_TARGET_FILTER_SIGMAS", None)
+        st2 = Stream()
+        assert st2.filter_targets_by_home is False, st2.filter_targets_by_home
+    finally:
+        for k, v in (("SHIRO_TARGET_FILTER", old1),
+                     ("SHIRO_TARGET_FILTER_SIGMAS", old2)):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    print("       env on -> filter True/3.0; env off -> False")
+
+
 def main() -> int:
     tests = [(n, f) for n, f in sorted(globals().items())
              if n.startswith("test_") and callable(f)]

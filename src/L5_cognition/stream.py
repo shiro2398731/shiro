@@ -19,6 +19,7 @@ exposed, not by convention.
 from __future__ import annotations
 
 import collections
+import os
 
 import numpy as np
 from dataclasses import dataclass
@@ -241,6 +242,17 @@ class Stream:
         # 过滤半径（以「家半径的倍数」表示；默认 4.0 = 和家规同半径）。
         # 只在 filter_targets_by_home=True 时生效；默认关，行为不变。
         self.target_filter_sigmas: float = 4.0
+        # 2026-11-27：为了让「上机实验」能跨 P2 重启生效，加环境变量开关（默认关）。
+        #   SHIRO_TARGET_FILTER=1 / true / on   -> 打开候选过滤
+        #   SHIRO_TARGET_FILTER_SIGMAS=3.0      -> 过滤半径（σ 倍数，默认 3.0）
+        if os.environ.get("SHIRO_TARGET_FILTER", "").strip().lower() in (
+                "1", "true", "yes", "on"):
+            self.filter_targets_by_home = True
+            try:
+                self.target_filter_sigmas = float(
+                    os.environ.get("SHIRO_TARGET_FILTER_SIGMAS", "3.0"))
+            except ValueError:
+                self.target_filter_sigmas = 3.0
         self._leave_target: Optional[int] = None
         # 只给 tools/intervene.py 用：强制某一边，用来做 do(a) 对照。
         self.force_action = None
