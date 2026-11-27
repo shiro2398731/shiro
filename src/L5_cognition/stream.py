@@ -32,6 +32,7 @@ from .terrain import StateSpace
 from .transitions import Transition, TransitionDetector
 from .workspace import GlobalWorkspace, Ignition
 from .action import HOLD, LEAVE, NAMES as ACTION_NAMES, ActionGate
+from .deliberation import Deliberation
 
 # 过去多少个"她感到的张力"参与中位数比较。C1：缓冲区长度，不是判据。
 TENSION_MEMORY = 64
@@ -253,6 +254,11 @@ class Stream:
                     os.environ.get("SHIRO_TARGET_FILTER_SIGMAS", "3.0"))
             except ValueError:
                 self.target_filter_sigmas = 3.0
+        # 2026-11-27（默认关）：她自己的推演原型 #0。
+        # True 时走 deliberation：不选最近、不用家半径、不用张力中位判走留。
+        # 默认 False = 完全旧行为。
+        self.use_deliberation: bool = False
+        self.deliberation = Deliberation()
         self._leave_target: Optional[int] = None
         # 只给 tools/intervene.py 用：强制某一边，用来做 do(a) 对照。
         self.force_action = None
@@ -385,7 +391,13 @@ class Stream:
 
         # 先决定，再动。用的是上一步留下的位置与张力 —— 她不能在动过之后
         # 才决定要不要动。
-        self._action = self._choose_action()
+        if self.use_deliberation:
+            _act, _dir, _rec = self.deliberation.choose(self)
+            self._action = int(_act)
+            if int(_act) == LEAVE and _dir is not None:
+                self._st = DynamicState(x=self._st.x + _dir, v=self._st.v)
+        else:
+            self._action = self._choose_action()
 
         self._st = self.dynamics.step(self._st, self.landscape, self.rng)
         self._step_count += 1
