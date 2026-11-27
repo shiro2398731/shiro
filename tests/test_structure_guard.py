@@ -109,10 +109,16 @@ def test_no_free_fall_across_two_windows() -> None:
               tail[third],
               tail[2 * third],
               tail[-1]]
-    # 只有「三段都严格下降」才算自由落体
+    # 2026-11-27：只看「每段都降」会误报——她正常 -4 区/小时，36 分钟窗口里
+    # 掉 2-3 个区就会三段单调下降（实测全量套件里偶发 FAIL，单独跑又 PASS）。
+    # 真正的「塌」是 2026-11-16 那种 626→3（相对跌幅 ~99%）。所以判据改成：
+    # 单调下降 **且** 相对跌幅 > 20% 才算自由落体。
     falling = all(b < a for a, b in zip(counts, counts[1:]))
-    assert not falling, f"region count fell in every window: {counts}"
-    print(f"       real-machine windows (last 12 obs): {counts} (not a free fall)")
+    drop = (counts[0] - counts[-1]) / max(1, counts[0])
+    assert not (falling and drop > 0.20), (
+        f"region count fell in every window: {counts} (drop {drop:.1%})")
+    print(f"       real-machine windows (last 12 obs): {counts}, "
+          f"drop {drop:.2%} (not a free fall)")
 
 
 def main() -> int:
