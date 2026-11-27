@@ -109,11 +109,19 @@ def run(steps: int = 1200, bins: int = BINS, seed: int = 0) -> dict:
 
     rows, _h = _score(OnlineSelfModel(), seq)
     out["real"] = calibration(rows, bins)
+    if len(rows) >= 200:
+        # 2026-11-27：和 AST 同一套样本外口径——只统计后半段。
+        # online_2nd 对比 transferred（前半学、后半冻结），两边看的是同一段数据。
+        cut = len(rows) // 2
+        out["online_second_half"] = calibration(rows[cut:], bins)
 
     shuffled = list(seq)
     random.Random(seed).shuffle(shuffled)
     rows_s, _h = _score(OnlineSelfModel(), shuffled)
     out["shuffled"] = calibration(rows_s, bins)
+    if len(rows_s) >= 200:
+        cut = len(rows_s) // 2
+        out["shuffled_second_half"] = calibration(rows_s[cut:], bins)
 
     # Transfer: learn on the first half of the real sequence, score on the second,
     # with the table frozen. Confident and wrong is exactly what M2 is for.
@@ -154,7 +162,9 @@ def main(argv: list[str]) -> int:
     print(f"steps={r['steps']}  transitions={r['transitions']}  "
           f"distinct regions={r['regions']}")
     print(_line("real", r["real"]))
+    print(_line("online_2nd", r.get("online_second_half", {"n": 0})))
     print(_line("shuffled", r["shuffled"]))
+    print(_line("shuffled_2nd", r.get("shuffled_second_half", {"n": 0})))
     print(_line("transferred", r["transferred"]))
     print("  (transferred = learned on the first half, scored frozen on the second)")
     print("校准表（real，按她的把握等频切分）：")
