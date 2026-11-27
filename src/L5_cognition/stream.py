@@ -259,6 +259,15 @@ class Stream:
         # 默认 False = 完全旧行为。
         self.use_deliberation: bool = False
         self.deliberation = Deliberation()
+        # 2026-11-27（默认关）：真代谢实验——移动真的消耗她的能量，
+        # 待着回一点，进新区域回一点；能量见底就只能歇着。
+        # 默认 False = 旧行为（能量恒 1.0、永不睡）。
+        self.use_metabolism: bool = False
+        self.metabolism_cost: float = 0.02      # 每步（按位移/半径）消耗
+        self.metabolism_recover: float = 0.001  # 待着每步回
+        self.metabolism_fresh: float = 0.005    # 进入新区域回（比走一步少，才有约束）
+        self.metabolism_floor: float = 0.05     # 见底只能歇
+        self._last_uid: Optional[int] = None
         self._leave_target: Optional[int] = None
         # 只给 tools/intervene.py 用：强制某一边，用来做 do(a) 对照。
         self.force_action = None
@@ -391,16 +400,34 @@ class Stream:
 
         # 先决定，再动。用的是上一步留下的位置与张力 —— 她不能在动过之后
         # 才决定要不要动。
+        _x_before = np.asarray(self._st.x, dtype=float).copy()
         if self.use_deliberation:
             _act, _dir, _rec = self.deliberation.choose(self)
             self._action = int(_act)
             if int(_act) == LEAVE and _dir is not None:
                 self._st = DynamicState(x=self._st.x + _dir, v=self._st.v)
+        elif self.use_metabolism and self.energy <= self.metabolism_floor:
+            # 真代谢：见底就只能歇着（她自己的能量约束，不是外部规则）
+            self._action = HOLD
         else:
             self._action = self._choose_action()
 
         self._st = self.dynamics.step(self._st, self.landscape, self.rng)
         self._step_count += 1
+
+        # 2026-11-27（默认关）：真代谢——移动扣能量、待着回、进新区域回
+        if self.use_metabolism:
+            _scale = float(self._own_scale()) or 1.0
+            _disp = float(np.linalg.norm(np.asarray(self._st.x, dtype=float) - _x_before))
+            if int(self._action) == LEAVE:
+                self.energy = max(0.0, self.energy
+                                  - self.metabolism_cost * (_disp / _scale))
+            else:
+                self.energy = min(1.0, self.energy + self.metabolism_recover)
+            _uid = self.detector.current_attractor
+            if _uid is not None and int(_uid) != self._last_uid:
+                self.energy = min(1.0, self.energy + self.metabolism_fresh)
+                self._last_uid = int(_uid)
 
         # 独立自立：记下这一步的动作（她的，不是我们给的）
         # 2026-11-24：`_action` 是整数（HOLD/LEAVE），原来这里和字符串 "leave"
