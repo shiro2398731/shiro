@@ -238,6 +238,9 @@ class Stream:
         # True 时 direction 只选「离家 <= home_radius_sigmas*scale」的候选；
         # 默认 False = 完全旧行为。副本实验《2026-11-27_目标选择提案》用它。
         self.filter_targets_by_home: bool = False
+        # 过滤半径（以「家半径的倍数」表示；默认 4.0 = 和家规同半径）。
+        # 只在 filter_targets_by_home=True 时生效；默认关，行为不变。
+        self.target_filter_sigmas: float = 4.0
         self._leave_target: Optional[int] = None
         # 只给 tools/intervene.py 用：强制某一边，用来做 do(a) 对照。
         self.force_action = None
@@ -886,7 +889,7 @@ class Stream:
                             and len(self._arrival_hist) >= 4),
                 preferred_target=self._leave_target,
                 home=self._home_x if self.filter_targets_by_home else None,
-                max_home_dist=(float(self.home_radius_sigmas) * float(scale)
+                max_home_dist=(float(self.target_filter_sigmas) * float(scale)
                                if self.filter_targets_by_home else None))
             if d is not None:
                 self._leave_target = self.actions.last_target

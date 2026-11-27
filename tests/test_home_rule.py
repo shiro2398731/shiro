@@ -53,6 +53,7 @@ def test_home_radius_is_a_knob_default_4() -> None:
     st = _boot()
     assert st.home_radius_sigmas == 4.0, st.home_radius_sigmas
     assert st.filter_targets_by_home is False, st.filter_targets_by_home
+    assert st.target_filter_sigmas == 4.0, st.target_filter_sigmas
     print(f"       home_radius_sigmas default = {st.home_radius_sigmas}; "
           f"target filter off")
 
