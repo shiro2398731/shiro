@@ -522,6 +522,7 @@ def main() -> int:
                     "attn_acc": ss["attn_acc"],
                     "attn_conf": ss["attn_conf"],
                     "attn_bits": ss["attn_bits"],
+                    "attn_bits_recent": ss["attn_bits_recent"],
                     "attn_base_bits": ss["attn_base_bits"],
                     # 她的动作：谁选的、离开占多少。行动是她自己的，不是统计出来的。
                     "action": ss["action"],

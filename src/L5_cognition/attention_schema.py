@@ -32,7 +32,13 @@ from __future__ import annotations
 
 import math
 
+import collections
+
 SMOOTHING = 0.5
+
+# 最近多少次点火的 bits 进滚动窗口。累计 bits 会把「最近变差」平均掉，
+# 滚动窗口是给真机看退化的；容量是 C1 的缓冲纪律，不是判据。
+RECENT_WINDOW = 256
 
 
 class AttentionSchema:
@@ -56,6 +62,9 @@ class AttentionSchema:
         # confidence of her own prediction, running mean
         self.conf_sum = 0.0
         self.conf_n = 0
+        # 2026-11-27：最近 N 次点火的 bits（给真机看退化，不改变学习）
+        self._recent_bits: collections.deque = collections.deque(
+            maxlen=RECENT_WINDOW)
 
     # ---------- probability ----------
 
@@ -129,7 +138,9 @@ class AttentionSchema:
         # score only when there was something to score against
         if self.last is not None and self._seen:
             self.scored += 1
-            self.nll_bits += -math.log2(max(p, 1e-12))
+            _b = -math.log2(max(p, 1e-12))
+            self.nll_bits += _b
+            self._recent_bits.append(_b)
             self.base_nll_bits += -math.log2(max(self._base_p(u), 1e-12))
         if conf > 0.0:
             self.conf_sum += conf
@@ -157,6 +168,13 @@ class AttentionSchema:
         return self.nll_bits / self.scored if self.scored else 0.0
 
     @property
+    def recent_bits(self) -> float:
+        """Mean bits over the most recent RECENT_WINDOW scored ignitions."""
+        if not self._recent_bits:
+            return 0.0
+        return sum(self._recent_bits) / len(self._recent_bits)
+
+    @property
     def base_bits_per_ignition(self) -> float:
         return self.base_nll_bits / self.base_scored if self.base_scored else 0.0
 
@@ -182,6 +200,7 @@ class AttentionSchema:
             "base_scored": int(self.base_scored),
             "conf_sum": float(self.conf_sum),
             "conf_n": int(self.conf_n),
+            "recent_bits": [float(v) for v in self._recent_bits],
         }
 
     @classmethod
@@ -204,4 +223,6 @@ class AttentionSchema:
         a.base_scored = int(data.get("base_scored", 0))
         a.conf_sum = float(data.get("conf_sum", 0.0))
         a.conf_n = int(data.get("conf_n", 0))
+        for v in data.get("recent_bits") or []:
+            a._recent_bits.append(float(v))
         return a

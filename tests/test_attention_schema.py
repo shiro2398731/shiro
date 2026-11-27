@@ -33,9 +33,10 @@ def test_learns_a_two_cycle() -> None:
     assert a.bits_per_ignition < a.base_bits_per_ignition, (
         a.bits_per_ignition, a.base_bits_per_ignition)
     assert a.predict(1)[0] == 2 and a.predict(2)[0] == 1
+    assert 0.0 <= a.recent_bits < 1.0, a.recent_bits
     print(f"       two-cycle: acc {a.accuracy:.2f} vs base "
           f"{a.base_accuracy:.2f}; bits {a.bits_per_ignition:.3f} vs base "
-          f"{a.base_bits_per_ignition:.3f}")
+          f"{a.base_bits_per_ignition:.3f}; recent {a.recent_bits:.3f}")
 
 
 def test_prediction_confidence_is_bounded() -> None:
@@ -54,9 +55,11 @@ def test_roundtrip_keeps_learning() -> None:
         a.observe(u)
     b = AttentionSchema.from_dict(a.to_dict())
     assert b.accuracy == a.accuracy and b.bits_per_ignition == a.bits_per_ignition
+    assert abs(b.recent_bits - a.recent_bits) < 1e-12, (a.recent_bits, b.recent_bits)
     b.observe(5)
     assert b.observations == a.observations + 1
-    print(f"       roundtrip keeps counts; bits={b.bits_per_ignition:.3f}")
+    print(f"       roundtrip keeps counts; bits={b.bits_per_ignition:.3f}, "
+          f"recent={b.recent_bits:.3f}")
 
 
 def test_new_symbol_is_not_scored_as_certain() -> None:
@@ -85,7 +88,8 @@ def test_stream_wires_attention_without_changing_behaviour() -> None:
     if st.workspace.ignition_count:
         assert st2.attention.observations > 0, st2.attention.observations
     ss = st2.stream_state()
-    for k in ("attn_n", "attn_acc", "attn_bits", "attn_base_bits", "attn_conf"):
+    for k in ("attn_n", "attn_acc", "attn_bits", "attn_bits_recent",
+              "attn_base_bits", "attn_conf"):
         assert k in ss, k
     before = st2._step_count
     for _ in range(3):

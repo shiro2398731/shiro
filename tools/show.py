@@ -149,7 +149,9 @@ def main() -> int:
                   f"{('—' if _ab is None else _ab)} vs 基线 "
                   f"{('—' if _bb is None else _bb)}  ← 越小越好")
             if _aa is not None:
-                print(f"            命中 {_aa}，把握 {('—' if _ac is None else _ac)}"
+                _ar = snap.get("attn_bits_recent")
+                print(f"            命中 {_aa}，把握 {('—' if _ac is None else _ac)}，"
+                      f"近 256 次 {('—' if _ar is None else _ar)} bits"
                       f"  ← 把握明显高于命中 = 过自信")
 
     if a.walk:

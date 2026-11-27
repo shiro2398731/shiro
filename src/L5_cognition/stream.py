@@ -994,6 +994,8 @@ class Stream:
             "attn_n": int(self.attention.observations),
             "attn_acc": round(float(self.attention.accuracy), 4),
             "attn_bits": round(float(self.attention.bits_per_ignition), 4),
+            # 2026-11-27：最近 256 次点火的 bits——累计值会把退化平均掉。
+            "attn_bits_recent": round(float(self.attention.recent_bits), 4),
             "attn_base_bits": round(
                 float(self.attention.base_bits_per_ignition), 4),
             "attn_conf": round(float(self.attention.mean_confidence), 4),
