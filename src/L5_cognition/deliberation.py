@@ -70,6 +70,16 @@ class Deliberation:
         # 路程用自己的步长折算。value = age / (1 + dist/scale)。
         self.value_mode = False
         self.value_power = 2.0  # 路程折算的幂（实验）
+        # v6（实验）：她自己的移动代价与领地中心。
+        #   energy：走一步扣、休息回；低到 floor 就只休息
+        #   center：她停留最多的地方（按 dwell 的 EMA），不是我们设的 4σ 家
+        self.energy_mode = False
+        self.energy = 1.0
+        self.energy_cost = 0.02
+        self.energy_gain = 0.01
+        self.energy_floor = 0.25
+        self.dwell = {}
+        self.center = None
 
     # ---------- 她自己的量 ----------
 
@@ -175,6 +185,13 @@ class Deliberation:
         self.step_index += 1
         if current_uid is not None:
             self.seen[int(current_uid)] = self.step_index
+            self.dwell[int(current_uid)] = self.dwell.get(int(current_uid), 0) + 1
+            # 领地中心：她自己停留史的 EMA（不是外部 home）
+            row = space.uid_row().get(int(current_uid))
+            if row is not None:
+                mu_c = np.asarray(attrs[row].mu, dtype=float)
+                self.center = (mu_c.copy() if self.center is None
+                               else 0.99 * self.center + 0.01 * mu_c)
         # 候选：4 个最近的 + 4 个最近的「没去过」的（她的领地记忆）。
         # 全部来自她的地形；不按外部「最近未去过」规则，只用距离和她的记忆。
         cand = []
@@ -212,6 +229,20 @@ class Deliberation:
 
         # ── v5：按「领地年龄 / 路程」选（实验模式）──
         if self.value_mode:
+            if self.energy_mode and self.energy <= self.energy_floor:
+                # 低能量：朝她自己停留最多的中心走回去（不是我们设的家）
+                if self.center is not None:
+                    dc = float(np.linalg.norm(self.center - x))
+                    if dc > 2.0 * scale:
+                        unit = (self.center - x) / dc
+                        self.energy = max(0.0, self.energy - self.energy_cost * 0.5)
+                        self.last = {"reason": "return", "energy": self.energy,
+                                     "candidates": []}
+                        return LEAVE, unit * scale, self.last
+                self.energy = min(1.0, self.energy + self.energy_gain)
+                self.last = {"reason": "recover", "energy": self.energy,
+                             "candidates": []}
+                return HOLD, None, self.last
             best = None
             for i, a in enumerate(attrs):
                 mu = np.asarray(a.mu, dtype=float)
@@ -219,18 +250,30 @@ class Deliberation:
                 if d <= 1e-12:
                     continue
                 uid = int(getattr(a, "uid", i))
-                # 没去过 = 很老（用她自己的步数做年龄上限，不用外部常数）
+                # 没去过 = 很老，但她的记忆有窗口：超过 window 步就一样老。
+                # 不是为了收范围而设半径，是「她记不住那么久」（窗口同她的其他记忆）。
                 age = self.step_index - self.seen.get(uid, -self.step_index)
+                age = min(float(age), float(self.window))
                 value = float(age) / (
                     1.0 + (d / max(scale, 1e-12)) ** self.value_power)
+                if self.energy_mode:
+                    # 自己的能量：低能量时探索欲下降
+                    value *= max(0.05, self.energy)
+                    # 自己的领地中心：低能量时更想回来
+                    if self.center is not None:
+                        dc = float(np.linalg.norm(self.center - x))
+                        value -= 2.0 * (dc / max(scale, 1e-12)) * (1.0 - self.energy)
                 if best is None or value > best[0]:
                     best = (value, (mu - x) / d, uid, d)
             if best is not None and best[3] > 1e-12:
                 self.intent = {"uid": best[2], "score": best[0]}
                 self.unrest *= self.unrest_after
-                self.last = {"reason": "value_mode", "intent": self.intent,
-                             "candidates": []}
                 step = min(scale, best[3])
+                if self.energy_mode:
+                    self.energy = max(0.0, self.energy
+                                      - self.energy_cost * (step / scale))
+                self.last = {"reason": "value_mode", "intent": self.intent,
+                             "candidates": [], "energy": self.energy}
                 return LEAVE, best[1] * step, self.last
             self.unrest += self.unrest_rate
             self.last = {"reason": "value_mode_none", "candidates": []}
@@ -254,6 +297,8 @@ class Deliberation:
                 if d_int <= float(a_int.sigma):
                     self.intent = None  # 到了，意向完成
                     self.unrest *= self.unrest_after
+                    if self.energy_mode:
+                        self.energy = min(1.0, self.energy + 0.05)
                     self.last = {"reason": "arrived", "candidates": []}
                     return HOLD, None, self.last
                 else:
