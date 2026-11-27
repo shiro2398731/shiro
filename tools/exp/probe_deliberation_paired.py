@@ -31,9 +31,12 @@ def run(mode: str):
     if mode != "rules":
         st.use_deliberation = True
         st.deliberation.value_mode = mode in (
-            "value", "energy", "energy_lo", "energy_hi", "energy_deep", "energy_mid")
+            "value", "energy", "energy_lo", "energy_hi", "energy_deep", "energy_mid",
+            "rollout")
         st.deliberation.energy_mode = mode in (
             "energy", "energy_lo", "energy_hi", "energy_deep", "energy_mid")
+        if mode == "rollout":
+            st.deliberation.rollout_mode = True
         if mode == "energy_lo":
             st.deliberation.energy_cost = 0.05
         if mode == "energy_hi":
@@ -74,5 +77,5 @@ def run(mode: str):
 
 
 for m in ("rules", "delib", "value", "energy", "energy_lo", "energy_hi",
-          "energy_deep", "energy_mid"):
+          "energy_deep", "energy_mid", "rollout"):
     print(f"{m:11}", run(m))
