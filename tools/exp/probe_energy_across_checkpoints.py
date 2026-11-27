@@ -38,6 +38,11 @@ def run(ck: str, mode: str):
         st.deliberation.energy_mode = True
         st.deliberation.energy_cost = 0.08
         st.deliberation.energy_floor = 0.20
+    if mode == "delib_met":
+        st.use_metabolism = True
+        st.use_deliberation = True
+        st.deliberation.value_mode = True
+        st.deliberation.energy_mode = True
     x0 = np.asarray(st._st.x, dtype=float).copy()
     r0 = len(st.landscape.state_space.attractors())
     seen = set()
@@ -64,5 +69,6 @@ for ck in CKS:
         print("missing", ck)
         continue
     print(ck)
-    print("  rules ", run(ck, "rules"))
-    print("  energy", run(ck, "energy"))
+    print("  rules   ", run(ck, "rules"))
+    print("  energy  ", run(ck, "energy"))
+    print("  delib_met", run(ck, "delib_met"))
