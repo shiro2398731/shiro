@@ -97,6 +97,18 @@ def _last_p2_snapshot() -> dict:
     return {}
 
 
+def _continuity() -> dict:
+    """她的「连续」现在只有外部账本：coma 时间章 + epoch 世代。只读展示。"""
+    out = {}
+    for name, key in (("coma.json", "coma"), ("epoch.json", "epoch")):
+        p = ROOT / "data" / "state" / name
+        try:
+            out[key] = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            out[key] = {}
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--walk", action="store_true")
@@ -130,6 +142,16 @@ def main() -> int:
         print(f"  最近       {int(recent['window_s'])}s 采样里 leave 占比 "
               f"{recent['leave_share_obs']:.0%}（{recent['leaves']}/{recent['obs_n']}）")
     print(f"  崩溃账     {crash['total']} 次（崩溃行 {crash.get('restart')} + 放弃重启 {crash.get('gave_up')}）")
+    # 2026-11-27：连续性也放进来（只读；她的状态里没有断点记忆，只有外部账本）
+    _c = _continuity()
+    _cm = _c.get("coma") or {}
+    _ep = _c.get("epoch") or {}
+    if _cm or _ep:
+        _up = float(_cm.get("uptime_s") or 0.0) / 3600.0
+        _coma = float(_cm.get("coma_s") or 0.0) / 3600.0
+        print(f"  连续性     世代 {_ep.get('epoch', '—')} · uptime {_up:.1f}h · "
+              f"昏迷 {_cm.get('coma_events', '—')} 次 · 上次断点 {_cm.get('last_gap_s', '—')}s · "
+              f"断点只记在外部账本")
     snap = _last_p2_snapshot()
     if snap:
         _hd = snap.get("home_dist")
