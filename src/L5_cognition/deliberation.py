@@ -70,6 +70,11 @@ class Deliberation:
         # 路程用自己的步长折算。value = age / (1 + dist/scale)。
         self.value_mode = False
         self.value_power = 2.0  # 路程折算的幂（实验）
+        # v9（实验）：多步（默认 3 步）推演，用同一套她自己的价值。
+        self.rollout_mode = False
+        self.rollout_depth = 3
+        self.rollout_width = 8
+        self.rollout_gamma = 0.5
         # v6（实验）：她自己的移动代价与领地中心。
         #   energy：走一步扣、休息回；低到 floor 就只休息
         #   center：她停留最多的地方（按 dwell 的 EMA），不是我们设的 4σ 家
@@ -78,6 +83,7 @@ class Deliberation:
         self.energy_cost = 0.02
         self.energy_gain = 0.01
         self.energy_floor = 0.25
+        self.energy_arrive = 0.05
         self.dwell = {}
         self.center = None
 
@@ -227,6 +233,49 @@ class Deliberation:
         cand = near + [t for t in novel if t[1] not in {u[1] for u in near}]
         cand = cand[: self.max_candidates]
 
+        # ── v9：多步推演（实验模式）──
+        if self.value_mode and self.rollout_mode:
+            mus = np.stack([np.asarray(a.mu, dtype=float) for a in attrs])
+            d = np.linalg.norm(mus - x, axis=1)
+            ages = np.asarray([
+                min(float(self.step_index - self.seen.get(
+                    int(getattr(a, "uid", i)), -self.step_index)),
+                    float(self.window))
+                for i, a in enumerate(attrs)], dtype=float)
+            base = ages / (1.0 + (d / max(scale, 1e-12)) ** self.value_power)
+            base[d <= 1e-12] = -np.inf
+            top = np.argsort(base)[::-1][: self.rollout_width]
+            best = None
+            for j in top:
+                if not np.isfinite(base[j]):
+                    continue
+                total = float(base[j])
+                pos = mus[j]
+                weight = 1.0
+                for _ in range(self.rollout_depth - 1):
+                    dn = np.linalg.norm(mus - pos, axis=1)
+                    vn = ages / (1.0 + (dn / max(scale, 1e-12)) ** self.value_power)
+                    vn[dn <= 1e-12] = -np.inf
+                    k = int(np.argmax(vn))
+                    weight *= self.rollout_gamma
+                    total += weight * float(vn[k])
+                    pos = mus[k]
+                if best is None or total > best[0]:
+                    best = (total, int(j))
+            if best is not None:
+                mu = mus[best[1]]
+                d0 = float(np.linalg.norm(mu - x))
+                if d0 > 1e-12:
+                    step = min(scale, d0)
+                    self.intent = {"uid": int(getattr(attrs[best[1]], "uid", best[1])),
+                                   "score": best[0]}
+                    self.unrest *= self.unrest_after
+                    self.last = {"reason": "rollout", "intent": self.intent,
+                                 "candidates": [], "depth": self.rollout_depth}
+                    return LEAVE, (mu - x) / d0 * step, self.last
+            self.last = {"reason": "rollout_none", "candidates": []}
+            return HOLD, None, self.last
+
         # ── v5：按「领地年龄 / 路程」选（实验模式）──
         if self.value_mode:
             if self.energy_mode and self.energy <= self.energy_floor:
@@ -298,7 +347,7 @@ class Deliberation:
                     self.intent = None  # 到了，意向完成
                     self.unrest *= self.unrest_after
                     if self.energy_mode:
-                        self.energy = min(1.0, self.energy + 0.05)
+                        self.energy = min(1.0, self.energy + self.energy_arrive)
                     self.last = {"reason": "arrived", "candidates": []}
                     return HOLD, None, self.last
                 else:

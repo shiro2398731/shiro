@@ -60,6 +60,21 @@ def test_holds_when_no_attractor() -> None:
     print("       empty space -> HOLD (no_attr)")
 
 
+def test_rollout_mode_runs() -> None:
+    st = _boot()
+    st.use_deliberation = True
+    st.deliberation.value_mode = True
+    st.deliberation.rollout_mode = True
+    actions = []
+    for _ in range(5):
+        st.landscape.set_noise_amplitude(0.1957)
+        st.step()
+        actions.append(int(st._action))
+    assert set(actions) <= {0, 1}, actions
+    assert st.deliberation.last is not None
+    print(f"       rollout actions={actions}, last={st.deliberation.last.get('reason')}")
+
+
 def main() -> int:
     tests = [(n, f) for n, f in sorted(globals().items())
              if n.startswith("test_") and callable(f)]
