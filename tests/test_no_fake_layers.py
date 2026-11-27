@@ -43,6 +43,20 @@ def test_old_name_gone() -> None:
     print("       old class name L1Predictor gone")
 
 
+def test_no_zero_byte_modules() -> None:
+    empty = [str(p.relative_to(ROOT)) for p in (ROOT / "src").rglob("*.py")
+             if p.stat().st_size == 0 and p.name != "__init__.py"]
+    assert not empty, empty
+    print("       src has no 0-byte non-__init__ modules")
+
+
+def test_l2_and_drives_dirs_gone() -> None:
+    assert not (ROOT / "src" / "L2_affect").exists(), "L2_affect 应已删除"
+    assert not (ROOT / "src" / "L4_drive" / "drives").exists(), "drives/ 应已删除"
+    assert not (ROOT / "src" / "main.py").exists(), "空 main.py 应已删除"
+    print("       L2_affect / drives / main.py gone")
+
+
 def main() -> int:
     tests = [(n, f) for n, f in sorted(globals().items())
              if n.startswith("test_") and callable(f)]
