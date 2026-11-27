@@ -151,7 +151,7 @@ def main() -> int:
             if _aa is not None:
                 _ar = snap.get("attn_bits_recent")
                 print(f"            命中 {_aa}，把握 {('—' if _ac is None else _ac)}，"
-                      f"近 256 次 {('—' if _ar is None else _ar)} bits"
+                      f"近期 {('—' if _ar is None else _ar)} bits"
                       f"  ← 把握明显高于命中 = 过自信")
 
     if a.walk:
