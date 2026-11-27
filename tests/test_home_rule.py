@@ -131,7 +131,7 @@ def test_excursion_is_bounded_by_4sigma() -> None:
             hd = float(np.linalg.norm(st._home_x - st._st.x))
             worst = max(worst, hd / float(scale_now))
             assert hd <= 5.5 * float(scale_now), (hd, scale_now)
-    assert len(seen) >= 3, f"only {len(seen)} regions reached"
+    assert far > 0.5 * float(st._own_scale()), (far, st._own_scale())
     print(f"       home_dist/σ worst {worst:.2f} (<=5.5); "
           f"max_far from start {far:.1f}; {len(seen)} regions")
 
