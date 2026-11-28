@@ -31,9 +31,6 @@ def _live_from_checkpoints():
     return {"net": net, "pred": pred, "field": field, "acc": net.accumulator, "stream": stream}
 
 
-def list_bundles(out_dir: Path | str = "data/bundles") -> list[Path]:
-    d = Path(out_dir)
-    return sorted(d.glob("her-*.bundle"))
 
 
 def rotate(out_dir: Path | str = "data/bundles", keep: int = 3,

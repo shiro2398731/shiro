@@ -60,9 +60,6 @@ class Landscape:
         self._deflect: Optional[np.ndarray] = None
         self._drive: Optional[np.ndarray] = None
         self._self_bias: Optional[np.ndarray] = None
-        # Global slow direction. Distinct from the per-region rest field:
-        # rest releases a region, swing gives the whole space a direction.
-        self._swing: Optional[np.ndarray] = None
         # No default. The fluctuation amplitude has to come from upstream; a
         # silent 0.0 here means the potential alone decides the trajectory, the
         # state settles into the nearest minimum, and nothing moves again. That
@@ -108,10 +105,6 @@ class Landscape:
     def set_self_bias(self, v: Optional[np.ndarray]) -> None:
         """L8 identity tilt."""
         self._self_bias = None if v is None else np.asarray(v, dtype=float)
-
-    def set_swing(self, v: Optional[np.ndarray]) -> None:
-        """Global slow-direction tilt. Summed with the others."""
-        self._swing = None if v is None else np.asarray(v, dtype=float)
 
     def set_noise_amplitude(self, a) -> None:
         """
@@ -163,9 +156,6 @@ class Landscape:
         if self._self_bias is not None:
             v += float(-self._self_bias @ r) * 0.001
 
-        if self._swing is not None:
-            v += float(-self._swing @ r) * 0.01
-
         return float(v)
 
     def gradient(self, x: np.ndarray) -> np.ndarray:
@@ -179,8 +169,6 @@ class Landscape:
             g += -self._drive * 0.01
         if self._self_bias is not None:
             g += -self._self_bias * 0.001
-        if self._swing is not None:
-            g += -self._swing * 0.01
         return g
 
     # ---------- observation and recovery ----------

@@ -120,10 +120,3 @@ def read_observations(limit: int = 20, log_dir: str | Path = "data/logs") -> lis
     return [json.loads(x) for x in lines[-limit:] if x.strip()]
 
 
-def read_events(limit: int = 50, log_dir: str | Path = "data/logs") -> list[dict]:
-    """读最近的事件。"""
-    path = Path(log_dir) / "events.jsonl"
-    if not path.exists():
-        return []
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return [json.loads(x) for x in lines[-limit:] if x.strip()]
