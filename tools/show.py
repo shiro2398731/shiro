@@ -18,6 +18,7 @@ import json
 import pickle
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -109,6 +110,54 @@ def _continuity() -> dict:
     return out
 
 
+def progress_from(rows, now=None) -> dict:
+    """rows=[(datetime, steps)]，返回最近两点的步数增量/步速/观测年龄。
+
+    2026-11-28：心跳新鲜不等于她在走（P2 曾 12h 只走 170 步）。
+    """
+    rows = [(t, s) for t, s in rows if s is not None]
+    if len(rows) < 2:
+        return {}
+    now = now or datetime.now(timezone.utc)
+    (t0, s0), (t1, s1) = rows[-2], rows[-1]
+    dt = max((t1 - t0).total_seconds(), 1e-3)
+    return {
+        "delta": int(s1 - s0),
+        "elapsed_s": round(dt, 1),
+        "rate_per_min": round((s1 - s0) / dt * 60.0, 1),
+        "obs_age_s": round((now - t1).total_seconds(), 1),
+    }
+
+
+def _p2_step_rows():
+    """从 observations 里取 P2 的 (t, steps) 序列。"""
+    import json as _json
+    from datetime import datetime as _dt
+
+    p = ROOT / "data" / "logs" / "observations.jsonl"
+    rows = []
+    try:
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = _json.loads(line)
+            except Exception:
+                continue
+            if d.get("process") != "P2":
+                continue
+            steps = (d.get("data") or {}).get("steps")
+            try:
+                t = _dt.fromisoformat(str(d.get("t")))
+            except Exception:
+                continue
+            rows.append((t, steps))
+    except OSError:
+        pass
+    return rows
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--walk", action="store_true")
@@ -127,6 +176,11 @@ def main() -> int:
     print("\n===== 她（观察者视图，只读）=====\n")
     print(f"  进程       {fresh}/3 心跳新鲜" + ("" if fresh else "  ← 她没在跑"))
     print(f"  结构       {r['regions']} 个区域，{r['steps']:,} 步")
+    _pg = progress_from(_p2_step_rows())
+    if _pg:
+        _stall = "  ← 停摆？" if (_pg["delta"] <= 0 and _pg["obs_age_s"] > 600) else ""
+        print(f"  走速       +{_pg['delta']} 步 / {_pg['elapsed_s']:.0f}s"
+              f"（{_pg['rate_per_min']:.1f} 步/分，最近观测 {_pg['obs_age_s']:.0f}s 前）{_stall}")
     print(f"  载体       {r['payload_mb']} MB（预算 20）")
     # 2026-11-20 夜：有限性（先只记录，不致死）
     _e = r.get("energy")
