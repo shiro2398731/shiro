@@ -30,12 +30,13 @@ os.chdir(ROOT)
 from src.common import persist  # noqa: E402
 from src.L5_cognition.stream import Stream  # noqa: E402
 
-STEPS = 500
+STEPS = int(os.environ.get("SHIRO_STEPS", "500"))
 P = 0.01
 FIXED = Path("data/state/_audit_yuxiang_fixed.pkl")
 
 
-def run(drift: bool):
+def run(p: float):
+    drift = p > 0
     cp = Path("data/state/_audit_yuxiang.pkl")
     shutil.copyfile(FIXED, cp)
     st = Stream()
@@ -48,7 +49,7 @@ def run(drift: bool):
     ign0 = int(st.workspace.total_ignitions)
     r0 = len(st.landscape.state_space.attractors())
     for _ in range(STEPS):
-        if drift and rng.random() < P:
+        if drift and rng.random() < p:
             attrs = st.landscape.state_space.attractors()
             if attrs:
                 a = attrs[int(rng.integers(0, len(attrs)))]
@@ -70,7 +71,7 @@ def run(drift: bool):
         pass
     return {
         "regions": len(st.landscape.state_space.attractors()),
-        "regions_delta": r0 and (len(st.landscape.state_space.attractors()) - r0),
+        "regions_delta": len(st.landscape.state_space.attractors()) - r0,
         "ignitions": int(st.workspace.total_ignitions) - ign0,
         "distinct_top_pairs": len(set(pairs)),
         "top_pair_changes": sum(1 for a, b in zip(pairs, pairs[1:]) if a != b),
@@ -81,10 +82,13 @@ def run(drift: bool):
 def main() -> int:
     if not FIXED.exists():
         shutil.copyfile(Path("data/state/l5.pkl"), FIXED)
-    print("baseline", run(False))
-    print("drift   ", run(True))
+    p_env = os.environ.get("SHIRO_YUXIANG_P")
+    ps = (float(p_env),) if p_env else (0.0, 0.002, 0.005, 0.01, 0.02)
+    for p in ps:
+        print(f"p={p:<6}", run(p))
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
+
