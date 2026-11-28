@@ -23,7 +23,7 @@ from src.common import persist  # noqa: E402
 from src.L5_cognition.stream import Stream  # noqa: E402
 from src.L6_expression.gate import SpeechGate  # noqa: E402
 
-STEPS = 500
+STEPS = int(os.environ.get("SHIRO_STEPS", "500"))
 CP = Path("data/state/_audit_speech.pkl")
 
 
@@ -87,4 +87,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
 
