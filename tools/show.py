@@ -31,6 +31,23 @@ from src.L5_cognition.stream import Stream  # noqa: E402
 from tools import vitals as vt  # noqa: E402
 
 
+def motive_stats(history) -> dict:
+    """L4→L5 的决策量：张力 sum 的当前值、到上中位的相对边距、历史 CV。
+
+    2026-11-28 审计发现：这个信号几乎不变（CV~0.085%），走/留在极小边距上决定。
+    这里只展示，不参与任何调节。
+    """
+    vals = [float(v) for v in history if np.isfinite(float(v))]
+    if not vals:
+        return {}
+    now = vals[-1]
+    med = sorted(vals)[len(vals) // 2]  # 与 ActionGate.choose 相同：上中位
+    margin = abs(now - med) / max(abs(now), 1e-12)
+    arr = np.asarray(vals, dtype=float)
+    cv = float(arr.std() / max(abs(arr.mean()), 1e-12))
+    return {"now": now, "median": med, "margin_rel": margin, "cv": cv, "n": len(vals)}
+
+
 def _one() -> dict:
     st = Stream()
     ok = persist.load_l5(st)
@@ -59,6 +76,8 @@ def _one() -> dict:
         "steps": int(st._step_count),
         # 有限性（2026-11-20 夜）：她还剩多少能量。1.0=满，0=耗尽（但还没接"致死"）
         "energy": round(float(getattr(st, "energy", 1.0)), 5),
+        # 2026-11-28：L4→L5 的决策量（只展示，不调节）
+        "motive": motive_stats(getattr(st, "_tension_history", ())),
     }
 
 
@@ -188,6 +207,10 @@ def main() -> int:
         _stall = "  ← 停摆？" if (_pg["delta"] <= 0 and _pg["obs_age_s"] > 600) else ""
         print(f"  走速       +{_pg['delta']} 步 / {_pg['elapsed_s']:.0f}s"
               f"（{_pg['rate_per_min']:.1f} 步/分，最近观测 {_pg['obs_age_s']:.0f}s 前）{_stall}")
+    _mt = r.get("motive") or {}
+    if _mt:
+        print(f"  动机       张力 sum={_mt['now']:.1f}，距上中位 {_mt['margin_rel']:.4%}"
+              f"（近{_mt['n']}步 CV {_mt['cv']:.4%}）  ← L4→L5 只用这一对数字")
     print(f"  载体       {r['payload_mb']} MB（预算 20）")
     # 2026-11-20 夜：有限性（先只记录，不致死）
     _e = r.get("energy")

@@ -14,7 +14,21 @@ from datetime import datetime, timedelta, timezone
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from tools.show import progress_from  # noqa: E402
+from tools.show import motive_stats, progress_from  # noqa: E402
+
+
+def test_motive_tiny_margin() -> None:
+    hist = [100.0, 100.05, 100.02, 100.08, 100.04]
+    g = motive_stats(hist)
+    assert g["n"] == 5
+    assert g["margin_rel"] < 0.01, g
+    assert g["cv"] < 0.01, g
+    print(f"       motive margin={g['margin_rel']:.4%} cv={g['cv']:.4%}")
+
+
+def test_motive_empty() -> None:
+    assert motive_stats([]) == {}
+    print("       empty history -> {}")
 
 
 def test_progress_normal() -> None:
