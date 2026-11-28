@@ -43,6 +43,8 @@ def run(p: float):
     assert persist.load_l5(st, name=cp.name)
     rng = np.random.default_rng(7)
     pairs = []
+    pair_by_step = []
+    ign_by_step = []
     prev_pair = None
     said = deque(maxlen=64)
     rel_speak = 0
@@ -55,7 +57,9 @@ def run(p: float):
                 a = attrs[int(rng.integers(0, len(attrs)))]
                 st.graph.touch(int(a.uid))
         st.landscape.set_noise_amplitude(0.1957)
+        prev_ign = int(st.workspace.total_ignitions)
         st.step()
+        ign_by_step.append(int(st.workspace.total_ignitions) - prev_ign)
         ts = sorted(st.drive.last, key=lambda t: t.amount, reverse=True)
         if ts:
             pair = (int(ts[0].a), int(ts[0].b))
@@ -65,6 +69,7 @@ def run(p: float):
                     said.append(pair)
                     rel_speak += 1
             prev_pair = pair
+        pair_by_step.append(pair if ts else None)
     try:
         cp.unlink()
     except FileNotFoundError:
@@ -76,6 +81,9 @@ def run(p: float):
         "distinct_top_pairs": len(set(pairs)),
         "top_pair_changes": sum(1 for a, b in zip(pairs, pairs[1:]) if a != b),
         "relation_would_speak": rel_speak,
+        "ign_bins": [sum(ign_by_step[i:i+1000]) for i in range(0, STEPS, 1000)],
+        "pair_bins": [len({x for x in pair_by_step[i:i+1000] if x is not None})
+                      for i in range(0, STEPS, 1000)],
     }
 
 
