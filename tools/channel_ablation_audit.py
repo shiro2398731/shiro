@@ -45,6 +45,12 @@ def run(mode: str):
         st.drive.deflection = lambda *a, **k: None
     if mode in ("no_pull", "no_both"):
         st.regulation.factors = lambda ss: None
+    if mode == "no_recall":
+        st.recaller.by_cue = lambda *a, **k: None
+    if mode == "no_ast":
+        st.attention.observe = lambda *a, **k: None
+    if mode == "no_self":
+        st.self_model.observe = lambda *a, **k: None
     r0 = len(st.landscape.state_space.attractors())
     actions = []
     sums = []
@@ -81,7 +87,7 @@ def main() -> int:
     base = run("baseline")
     b_actions = base["actions"]
     out = {"steps": STEPS, "baseline": {k: v for k, v in base.items() if k != "actions"}}
-    for mode in ("no_drive", "no_pull", "no_both"):
+    for mode in ("no_drive", "no_pull", "no_both", "no_recall", "no_ast", "no_self"):
         r = run(mode)
         hamming = sum(1 for a, b in zip(b_actions, r["actions"]) if a != b)
         out[mode] = {k: v for k, v in r.items() if k != "actions"}
