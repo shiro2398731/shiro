@@ -19,6 +19,9 @@ sys.path.insert(0, str(ROOT))
 
 from tools import keeper as K  # noqa: E402
 
+# run_suite 会在测试期间放 keeper.hold；这组测试要验端口守卫本身，绕过 hold。
+K._held = lambda: False
+
 
 def test_port_open_detects_listener() -> None:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
