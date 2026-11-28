@@ -32,7 +32,7 @@ os.chdir(ROOT)
 from src.common import persist  # noqa: E402
 from src.L5_cognition.stream import Stream  # noqa: E402
 
-STEPS = 300
+STEPS = int(os.environ.get("SHIRO_AUDIT_STEPS", "400"))
 FIXED = Path("data/state/_audit_ablate_fixed.pkl")
 
 
@@ -100,3 +100,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
