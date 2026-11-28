@@ -65,6 +65,8 @@ FLAGS = 0x00000008 | 0x08000000           # DETACHED_PROCESS | CREATE_NO_WINDOW
 # 每个模块自己的 PUB 端口（CONTRACTS/00_overview.md §5）。
 # keeper 用它区分「进程死了」和「进程活着但卡了 30 秒」——后者再起一套会抢端口。
 PORTS = {"P1": 5561, "P2": 5562, "P3": 5563}
+# 2026-11-28：心跳停了但端口还在，超过这个时长就记 stalled（P2 曾卡 12h 没人发现）。
+STALL_ALERT_S = 300.0
 
 EVENTS = LOGS / "keeper.jsonl"
 
@@ -249,6 +251,20 @@ def _watch(tags: list[str], now: float, w: Watcher) -> int:
             # 2026-11-26 19:46：心跳停了但端口还在听 = 进程卡住，不是死了。
             # 再起一套会抢端口（那次 P3 崩溃 5 次、还闪出一个窗口）。先等它自己恢复。
             if port_alive(tag):
+                # 2026-11-28：端口还在但心跳停了很久 = 卡住（P2 曾这样 12h 不走）。
+                # 以前只记 port_held、不告警。现在超过 STALL_ALERT_S 记一条 stalled，
+                # 每 10 分钟最多一条（不重启，避免抢端口）。
+                if age is not None and age >= STALL_ALERT_S:
+                    last = getattr(w, "stalled_at", {}).get(tag, 0.0)
+                    if now - last >= 600.0:
+                        if not hasattr(w, "stalled_at"):
+                            w.stalled_at = {}
+                        w.stalled_at[tag] = now
+                        event("stalled", tag=tag, age=round(age, 1),
+                              port=PORTS.get(tag))
+                        print(f"[keeper] {tag} 心跳停了 {age:.0f}s 但端口还在——疑似卡住",
+                              flush=True)
+                    continue
                 event("port_held", tag=tag, port=PORTS.get(tag),
                       stale_s=None if age is None else round(age, 1))
                 print(f"[keeper] {tag} 心跳 {('无' if age is None else f'{age:.0f}s')} "
