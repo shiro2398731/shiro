@@ -500,6 +500,8 @@ def main() -> int:
                 ss = stream.stream_state()
                 observer.snapshot("L5", {
                     "steps": steps,
+                    # 2026-11-28：本地 steps 重启会归零；走速要看存档里的总步数。
+                    "stream_steps": int(stream._step_count),
                     "attractors": ss["n_attractors"],
                     "n_salient": ss["n_salient"],
                     "speed": round(ss["speed"], 4),

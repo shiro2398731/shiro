@@ -130,7 +130,11 @@ def progress_from(rows, now=None) -> dict:
 
 
 def _p2_step_rows():
-    """从 observations 里取 P2 的 (t, steps) 序列。"""
+    """从 observations 里取 P2 的 (t, steps) 序列。
+
+    2026-11-28：优先用 `stream_steps`（存档总步数），`steps` 是 P2 本地计数器，
+    重启会归零，拿它算走速会出现 -1614 这种假象。
+    """
     import json as _json
     from datetime import datetime as _dt
 
@@ -147,7 +151,10 @@ def _p2_step_rows():
                 continue
             if d.get("process") != "P2":
                 continue
-            steps = (d.get("data") or {}).get("steps")
+            data = d.get("data") or {}
+            steps = data.get("stream_steps")
+            if steps is None:
+                continue  # 旧格式没有总步数，不能混着算
             try:
                 t = _dt.fromisoformat(str(d.get("t")))
             except Exception:
