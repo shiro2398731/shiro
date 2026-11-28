@@ -14,7 +14,19 @@ from datetime import datetime, timedelta, timezone
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from tools.show import motive_stats, progress_from  # noqa: E402
+from tools.show import motive_stats, p4_age_min, progress_from  # noqa: E402
+
+
+def test_p4_age() -> None:
+    p = __import__("pathlib").Path("data/state/_p4_age_test.hb")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("x", encoding="utf-8")
+    __import__("os").utime(p, (0, __import__("time").time() - 120))
+    age = p4_age_min(str(p))
+    assert age is not None and 1.8 < age < 2.2, age
+    p.unlink()
+    assert p4_age_min(str(p)) is None
+    print(f"       p4 age ok ({age:.2f} min)")
 
 
 def test_motive_tiny_margin() -> None:

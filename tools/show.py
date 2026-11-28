@@ -31,6 +31,14 @@ from src.L5_cognition.stream import Stream  # noqa: E402
 from tools import vitals as vt  # noqa: E402
 
 
+def p4_age_min(path: str = "data/logs/P4.heartbeat") -> float | None:
+    """P4（说）的心跳年龄；None = 从没起过。只读展示，不参与调节。"""
+    p = Path(path)
+    if not p.exists():
+        return None
+    return (time.time() - p.stat().st_mtime) / 60.0
+
+
 def motive_stats(history) -> dict:
     """L4→L5 的决策量：张力 sum 的当前值、到上中位的相对边距、历史 CV。
 
@@ -78,6 +86,7 @@ def _one() -> dict:
         "energy": round(float(getattr(st, "energy", 1.0)), 5),
         # 2026-11-28：L4→L5 的决策量（只展示，不调节）
         "motive": motive_stats(getattr(st, "_tension_history", ())),
+        "speak_age_min": p4_age_min(),
     }
 
 
@@ -211,6 +220,13 @@ def main() -> int:
     if _mt:
         print(f"  动机       张力 sum={_mt['now']:.1f}，距上中位 {_mt['margin_rel']:.4%}"
               f"（近{_mt['n']}步 CV {_mt['cv']:.4%}）  ← L4→L5 只用这一对数字")
+    _sa = r.get("speak_age_min")
+    if _sa is None:
+        print("  说        没有 P4 心跳（说离线）")
+    elif _sa > 60:
+        print(f"  说        P4 离线 {_sa / 1440:.1f} 天（闸后无输出）")
+    else:
+        print(f"  说        P4 在线（{_sa:.0f} 分钟前心跳）")
     print(f"  载体       {r['payload_mb']} MB（预算 20）")
     # 2026-11-20 夜：有限性（先只记录，不致死）
     _e = r.get("energy")
