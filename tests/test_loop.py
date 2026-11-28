@@ -28,11 +28,29 @@ from src.L5_cognition.stream import Stream  # noqa: E402
 
 
 def _warm(steps: int = 200, amplitude: float = 0.02) -> Stream:
+    import shutil
+    import time as _time
+
     from src.common import persist
 
     st = Stream()
-    if not persist.load_l5(st):
-        raise SystemExit("no L5 archive for this test")
+    # 2026-11-28：真机 P2 在写 l5.pkl 时，直接 load 会偶发 PermissionError。
+    # 先复制一份再读（重试几次），测试永远只看快照。
+    src = pathlib.Path("data/state/l5.pkl")
+    tmp = pathlib.Path("data/state/_test_loop_ck.pkl")
+    for _ in range(50):
+        try:
+            shutil.copyfile(src, tmp)
+            break
+        except PermissionError:
+            _time.sleep(0.2)
+    else:
+        raise SystemExit("l5.pkl is locked by the live process")
+    try:
+        if not persist.load_l5(st, name=tmp.name):
+            raise SystemExit("no L5 archive for this test")
+    finally:
+        tmp.unlink(missing_ok=True)
     for _ in range(steps):
         st.landscape.set_noise_amplitude(amplitude)
         st.step()

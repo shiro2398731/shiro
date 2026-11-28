@@ -132,7 +132,7 @@ def start_module(tag: str) -> int:
         kwargs["creationflags"] = FLAGS
     else:
         kwargs["start_new_session"] = True
-    proc = subprocess.Popen([str(PY), "-m", module], **kwargs)
+    proc = subprocess.Popen([str(PY), "-u", "-m", module], **kwargs)
     log.close()
     below_normal(proc.pid)
     return int(proc.pid)
